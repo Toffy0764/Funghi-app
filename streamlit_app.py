@@ -287,7 +287,6 @@ def salva_in_storico(luogo, regione, oggi_str, punteggi_oggi):
             "registrato_il": datetime.now().isoformat(timespec="seconds"),
         })
     nuovo_df = pd.DataFrame(nuove_righe)
-    # rimuovi eventuali righe duplicate per stesso luogo+data+specie
     if not df.empty:
         df = df[~((df["luogo"] == luogo) & (df["data"] == oggi_str) & (df["specie"].isin(nuovo_df["specie"])))]
     df = pd.concat([df, nuovo_df], ignore_index=True)
@@ -377,6 +376,18 @@ if "risultato" in st.session_state:
     st.subheader(f"{geo['nome']}{', ' + geo['regione'] if geo['regione'] else ''}")
     st.caption(f"Condizioni aggiornate al {data_leggibile}")
 
+    lat, lon = geo["lat"], geo["lon"]
+    mappa_url = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=14/{lat}/{lon}"
+    st.markdown(
+        f"📍 Coordinate usate per il calcolo: **{lat:.4f}, {lon:.4f}** &nbsp;·&nbsp; "
+        f"[Vedi il punto esatto sulla mappa]({mappa_url})"
+    )
+    st.caption(
+        "I dati meteo non provengono da una singola stazione fisica, ma da un modello "
+        "meteorologico interpolato su queste coordinate: utile per capire quanto il punto "
+        "calcolato sia vicino al bosco/zona che ti interessa davvero."
+    )
+
     for key, profilo in PROFILI.items():
         righe = serie[key]
         riga_oggi = next((x for x in righe if x["data"] == oggi_str), righe[-1])
@@ -400,7 +411,6 @@ if "risultato" in st.session_state:
                 else:
                     st.write("_Nessuna pioggia significativa recente_")
 
-                # giorno migliore nei prossimi giorni
                 futuri = [x for x in righe if x["data"] >= oggi_str]
                 if futuri:
                     migliore = max(futuri, key=lambda x: x["punteggio"])
