@@ -111,6 +111,7 @@ def geocodifica(luogo: str):
         "lon": res["longitude"],
         "nome": res.get("name", luogo),
         "regione": res.get("admin1", ""),
+        "elevazione_luogo": res.get("elevation"),
     }
 
 
@@ -121,7 +122,9 @@ def scarica_dati_meteo(lat: float, lon: float):
     Prova prima ICON-D2 (modello DWD, risoluzione ~2km, ottimo per Alpi/Nord Italia,
     ma copertura limitata a Centro Europa e forecast breve). Se non disponibile o
     incompleto per questo punto, ricade sul best-match generico di Open-Meteo.
-    Restituisce (dati, nome_modello_usato).
+    Restituisce (dati, nome_modello_usato, elevazione_metri).
+    L'elevazione è la quota della cella di griglia usata dal modello (non la quota
+    esatta richiesta): utile per capire quanto il dato è rappresentativo della zona.
     """
     base_params = {
         "latitude": lat,
@@ -152,6 +155,7 @@ def scarica_dati_meteo(lat: float, lon: float):
         r.raise_for_status()
         data = r.json()
         risultato = estrai(data)
+        elevazione = data.get("elevation")
         # Controlla che non manchino valori essenziali (es. fuori area di copertura
         # ICON-D2 spesso torna giorni con valori nulli)
         valori_nulli = sum(
@@ -159,7 +163,7 @@ def scarica_dati_meteo(lat: float, lon: float):
             if v["temp_media"] is None or v["pioggia_mm"] is None
         )
         if len(risultato) >= 20 and valori_nulli == 0:
-            return risultato, "ICON-D2 (DWD, ~2km)"
+            return risultato, "ICON-D2 (DWD, ~2km)", elevazione
     except (requests.exceptions.RequestException, KeyError, ValueError):
         pass  # ricade sul best-match sotto
 
@@ -167,7 +171,7 @@ def scarica_dati_meteo(lat: float, lon: float):
     r = requests.get(url, params=base_params, timeout=20)
     r.raise_for_status()
     data = r.json()
-    return estrai(data), "Best-match globale"
+    return estrai(data), "Best-match globale", data.get("elevation")
 
 
 # ----------------------------------------------------------------------------
@@ -369,7 +373,7 @@ if (cerca or cerca_automatica) and luogo_input.strip():
             st.session_state.pop("risultato", None)
         else:
             try:
-                dati, modello_usato = scarica_dati_meteo(geo["lat"], geo["lon"])
+                dati, modello_usato, elevazione = scarica_dati_meteo(geo["lat"], geo["lon"])
                 date_ordinate = sorted(dati.keys())
                 oggi_candidata = datetime.now().strftime("%Y-%m-%d")
                 if oggi_candidata in dati:
@@ -385,6 +389,7 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                     "oggi_str": oggi_str,
                     "serie": serie,
                     "modello_usato": modello_usato,
+                    "elevazione": elevazione,
                 }
 
                 punteggi_oggi = {}
@@ -403,6 +408,8 @@ if "risultato" in st.session_state:
     oggi_str = r["oggi_str"]
     serie = r["serie"]
     modello_usato = r.get("modello_usato", "Best-match globale")
+    elevazione_modello = r.get("elevazione")
+    elevazione_luogo = geo.get("elevazione_luogo")
 
     data_leggibile = datetime.strptime(oggi_str, "%Y-%m-%d").strftime("%-d %B")
     st.subheader(f"{geo['nome']}{', ' + geo['regione'] if geo['regione'] else ''}")
@@ -424,6 +431,23 @@ if "risultato" in st.session_state:
             f"🌍 Modello: **{modello_usato}** — ICON-D2 non disponibile per questo punto "
             "(fuori area Centro Europa o dati incompleti), uso il modello globale generico."
         )
+
+    if elevazione_modello is not None:
+        riga_quota = f"⛰️ Altitudine della cella meteo usata: **{elevazione_modello:.0f} m**"
+        if elevazione_luogo is not None:
+            diff = elevazione_modello - elevazione_luogo
+            riga_quota += f" (il luogo cercato è a ~{elevazione_luogo:.0f} m)"
+            if abs(diff) >= 150:
+                st.warning(
+                    riga_quota + f" — differenza di **{diff:+.0f} m**: a questa quota la temperatura "
+                    f"reale nel punto preciso che ti interessa può discostarsi di circa "
+                    f"{abs(diff) * 0.65 / 100:.1f}°C da quella calcolata (gradiente medio ~0.65°C/100m)."
+                )
+            else:
+                st.caption(riga_quota + f" (differenza {diff:+.0f} m, trascurabile)")
+        else:
+            st.caption(riga_quota)
+
 
     for key, profilo in PROFILI.items():
         righe = serie[key]
