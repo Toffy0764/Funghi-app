@@ -116,9 +116,14 @@ def geocodifica(luogo: str):
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def scarica_dati_meteo(lat: float, lon: float):
-    """Scarica dati storici (20gg) e forecast (7gg) da Open-Meteo."""
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
+    """
+    Scarica dati storici (20gg) e forecast (7gg) da Open-Meteo.
+    Prova prima ICON-D2 (modello DWD, risoluzione ~2km, ottimo per Alpi/Nord Italia,
+    ma copertura limitata a Centro Europa e forecast breve). Se non disponibile o
+    incompleto per questo punto, ricade sul best-match generico di Open-Meteo.
+    Restituisce (dati, nome_modello_usato).
+    """
+    base_params = {
         "latitude": lat,
         "longitude": lon,
         "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean",
@@ -126,19 +131,43 @@ def scarica_dati_meteo(lat: float, lon: float):
         "past_days": 20,
         "forecast_days": 7,
     }
-    r = requests.get(url, params=params, timeout=20)
+    url = "https://api.open-meteo.com/v1/forecast"
+
+    def estrai(data):
+        daily = data["daily"]
+        risultato = {}
+        for i, data_str in enumerate(daily["time"]):
+            risultato[data_str] = {
+                "pioggia_mm": daily["precipitation_sum"][i] or 0.0,
+                "temp_max": daily["temperature_2m_max"][i],
+                "temp_min": daily["temperature_2m_min"][i],
+                "temp_media": daily["temperature_2m_mean"][i],
+            }
+        return risultato
+
+    # Tentativo 1: ICON-D2 ad alta risoluzione (2km), valido per Centro Europa/Nord Italia
+    try:
+        params_icon = dict(base_params, models="icon_d2")
+        r = requests.get(url, params=params_icon, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        risultato = estrai(data)
+        # Controlla che non manchino valori essenziali (es. fuori area di copertura
+        # ICON-D2 spesso torna giorni con valori nulli)
+        valori_nulli = sum(
+            1 for v in risultato.values()
+            if v["temp_media"] is None or v["pioggia_mm"] is None
+        )
+        if len(risultato) >= 20 and valori_nulli == 0:
+            return risultato, "ICON-D2 (DWD, ~2km)"
+    except (requests.exceptions.RequestException, KeyError, ValueError):
+        pass  # ricade sul best-match sotto
+
+    # Fallback: best-match generico di Open-Meteo (copertura globale)
+    r = requests.get(url, params=base_params, timeout=20)
     r.raise_for_status()
     data = r.json()
-    daily = data["daily"]
-    risultato = {}
-    for i, data_str in enumerate(daily["time"]):
-        risultato[data_str] = {
-            "pioggia_mm": daily["precipitation_sum"][i] or 0.0,
-            "temp_max": daily["temperature_2m_max"][i],
-            "temp_min": daily["temperature_2m_min"][i],
-            "temp_media": daily["temperature_2m_mean"][i],
-        }
-    return risultato
+    return estrai(data), "Best-match globale"
 
 
 # ----------------------------------------------------------------------------
@@ -287,6 +316,7 @@ def salva_in_storico(luogo, regione, oggi_str, punteggi_oggi):
             "registrato_il": datetime.now().isoformat(timespec="seconds"),
         })
     nuovo_df = pd.DataFrame(nuove_righe)
+    # rimuovi eventuali righe duplicate per stesso luogo+data+specie
     if not df.empty:
         df = df[~((df["luogo"] == luogo) & (df["data"] == oggi_str) & (df["specie"].isin(nuovo_df["specie"])))]
     df = pd.concat([df, nuovo_df], ignore_index=True)
@@ -339,7 +369,7 @@ if (cerca or cerca_automatica) and luogo_input.strip():
             st.session_state.pop("risultato", None)
         else:
             try:
-                dati = scarica_dati_meteo(geo["lat"], geo["lon"])
+                dati, modello_usato = scarica_dati_meteo(geo["lat"], geo["lon"])
                 date_ordinate = sorted(dati.keys())
                 oggi_candidata = datetime.now().strftime("%Y-%m-%d")
                 if oggi_candidata in dati:
@@ -354,6 +384,7 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                     "geo": geo,
                     "oggi_str": oggi_str,
                     "serie": serie,
+                    "modello_usato": modello_usato,
                 }
 
                 punteggi_oggi = {}
@@ -371,6 +402,7 @@ if "risultato" in st.session_state:
     geo = r["geo"]
     oggi_str = r["oggi_str"]
     serie = r["serie"]
+    modello_usato = r.get("modello_usato", "Best-match globale")
 
     data_leggibile = datetime.strptime(oggi_str, "%Y-%m-%d").strftime("%-d %B")
     st.subheader(f"{geo['nome']}{', ' + geo['regione'] if geo['regione'] else ''}")
@@ -382,11 +414,16 @@ if "risultato" in st.session_state:
         f"📍 Coordinate usate per il calcolo: **{lat:.4f}, {lon:.4f}** &nbsp;·&nbsp; "
         f"[Vedi il punto esatto sulla mappa]({mappa_url})"
     )
-    st.caption(
-        "I dati meteo non provengono da una singola stazione fisica, ma da un modello "
-        "meteorologico interpolato su queste coordinate: utile per capire quanto il punto "
-        "calcolato sia vicino al bosco/zona che ti interessa davvero."
-    )
+    if modello_usato.startswith("ICON-D2"):
+        st.caption(
+            f"🎯 Modello: **{modello_usato}** — alta risoluzione (~2km), ottimo per zone alpine/Nord Italia. "
+            "Non è una singola stazione fisica, ma una cella di griglia molto piccola centrata su queste coordinate."
+        )
+    else:
+        st.caption(
+            f"🌍 Modello: **{modello_usato}** — ICON-D2 non disponibile per questo punto "
+            "(fuori area Centro Europa o dati incompleti), uso il modello globale generico."
+        )
 
     for key, profilo in PROFILI.items():
         righe = serie[key]
@@ -411,6 +448,7 @@ if "risultato" in st.session_state:
                 else:
                     st.write("_Nessuna pioggia significativa recente_")
 
+                # giorno migliore nei prossimi giorni
                 futuri = [x for x in righe if x["data"] >= oggi_str]
                 if futuri:
                     migliore = max(futuri, key=lambda x: x["punteggio"])
