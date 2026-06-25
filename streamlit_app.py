@@ -26,26 +26,6 @@ st.set_page_config(
 # ----------------------------------------------------------------------------
 
 PROFILI = {
-    "porcini": {
-        "label": "Porcini",
-        "latino": "Boletus edulis",
-        "colore": "#8B6F47",
-        "finestra_cumulo_giorni": 10,
-        "pioggia_min_significativa": 20,
-        "pioggia_ideale_min": 40,
-        "pioggia_ideale_max": 100,
-        "temp_ideale_min": 15,
-        "temp_ideale_max": 22,
-        "temp_accett_min": 10,
-        "temp_accett_max": 25,
-        "temp_min_notturna_limite": 10,
-        "giorni_attesa_min": 4,
-        "giorni_attesa_max": 10,
-        "giorni_raccolta": 7,
-        "peso_pioggia": 0.35,
-        "peso_temperatura": 0.25,
-        "peso_finestra": 0.40,
-    },
     "finferli": {
         "label": "Finferli",
         "latino": "Cantharellus cibarius",
@@ -89,6 +69,206 @@ PROFILI = {
 }
 
 SOGLIA_GIORNO_PIOVOSO = 5.0
+
+# ----------------------------------------------------------------------------
+# MODELLO STATISTICO PORCINI (pioggia residua + temperatura mediana)
+# ----------------------------------------------------------------------------
+# Modello a due parametri: la fruttificazione avviene quando pioggia residua
+# e temperatura mediana dell'aria si trovano entrambe in un "range di
+# produzione" per un numero di giorni consecutivi sufficiente a completare
+# la riproduzione del micelio (8-14 giorni secondo la tabella).
+#
+# Pioggia residua = 100% pioggia ultimi 10gg + 50% pioggia dei 10gg precedenti
+# (decadimento a gradino, approssimazione di un decadimento più graduale).
+#
+# Temperatura mediana = media delle temperature medie giornaliere dell'aria
+# nell'ultima settimana (si avvicina alla temperatura del terreno, più
+# rilevante per il micelio della temperatura dell'aria del solo giorno).
+#
+# Le due "famiglie" di porcini hanno range leggermente diversi:
+# - Edulis/Pinophilus: i porcini "di bosco" classici (faggio, abete, castagno)
+# - Aereus/Aestivalis: i porcini estivi (quercia, castagno, clima più caldo)
+
+# Tabella: pioggia_residua_mm -> (temp_min, temp_ottimale, temp_max) in °C
+TABELLA_EDULIS_PINOPHILUS = [
+    (55, 10, 11, 12),
+    (70, 10, 13, 15),
+    (80, 11, 14, 16),
+    (100, 11, 15, 17),
+    (120, 12, 16, 18),
+    (140, 13, 17, 18),
+    (160, 14, 18, 19),
+    (190, 15, 19, 19),
+]
+
+TABELLA_AEREUS_AESTIVALIS = [
+    (55, 14, 15, 16),
+    (70, 14, 16, 17),
+    (80, 14, 17, 18),
+    (100, 15, 18, 19),
+    (120, 16, 19, 20),
+    (140, 17, 20, 21),
+    (160, 19, 21, 22),
+    (190, 21, 22, 23),
+]
+
+# Tabella: pioggia_residua_mm -> (giorni con temp.min, giorni con temp.ottimale, giorni con temp.max)
+# Giorni necessari per completare la riproduzione del micelio.
+TABELLA_GIORNI_RIPRODUZIONE = [
+    (55, 10, 8, 8),
+    (70, 10, 9, 8),
+    (80, 11, 9, 8),
+    (100, 12, 10, 9),
+    (120, 12, 10, 10),
+    (140, 13, 11, 11),
+    (160, 14, 12, 12),
+]
+
+PIOGGIA_RESIDUA_MIN_TABELLA = 55
+PIOGGIA_RESIDUA_MAX_TABELLA = 190
+
+
+def _interpola_tabella(tabella, pioggia_residua):
+    """
+    Interpola linearmente nella tabella (pioggia -> min, ottimale, max) per
+    un valore di pioggia residua qualsiasi. Sotto/sopra i limiti della tabella,
+    usa il valore estremo (clamp) anziché extrapolare.
+    """
+    p = max(PIOGGIA_RESIDUA_MIN_TABELLA, min(PIOGGIA_RESIDUA_MAX_TABELLA, pioggia_residua))
+    for i in range(len(tabella) - 1):
+        p_a, min_a, ott_a, max_a = tabella[i]
+        p_b, min_b, ott_b, max_b = tabella[i + 1]
+        if p_a <= p <= p_b:
+            frazione = 0 if p_b == p_a else (p - p_a) / (p_b - p_a)
+            t_min = min_a + frazione * (min_b - min_a)
+            t_ott = ott_a + frazione * (ott_b - ott_a)
+            t_max = max_a + frazione * (max_b - max_a)
+            return t_min, t_ott, t_max
+    # fuori range gestito dal clamp sopra, qui solo per sicurezza
+    _, t_min, t_ott, t_max = tabella[0] if p <= tabella[0][0] else tabella[-1]
+    return t_min, t_ott, t_max
+
+
+def _giorni_riproduzione_necessari(pioggia_residua, temp_mediana, t_min, t_ott, t_max):
+    """
+    Stima i giorni di riproduzione del micelio necessari, interpolando la
+    tabella giorni in base a quanto la temperatura mediana è vicina al
+    minimo, ottimale o massimo del range corrente.
+    """
+    p = max(PIOGGIA_RESIDUA_MIN_TABELLA, min(160, pioggia_residua))
+    riga = None
+    for i in range(len(TABELLA_GIORNI_RIPRODUZIONE) - 1):
+        p_a, *_ = TABELLA_GIORNI_RIPRODUZIONE[i]
+        p_b, *_ = TABELLA_GIORNI_RIPRODUZIONE[i + 1]
+        if p_a <= p <= p_b:
+            riga = TABELLA_GIORNI_RIPRODUZIONE[i]
+            break
+    if riga is None:
+        riga = TABELLA_GIORNI_RIPRODUZIONE[-1] if p > 160 else TABELLA_GIORNI_RIPRODUZIONE[0]
+    _, gg_min, gg_ott, gg_max = riga
+
+    if temp_mediana <= t_min:
+        return gg_min
+    elif temp_mediana >= t_max:
+        return gg_max
+    elif temp_mediana <= t_ott:
+        frazione = (temp_mediana - t_min) / (t_ott - t_min) if t_ott != t_min else 0
+        return gg_min + frazione * (gg_ott - gg_min)
+    else:
+        frazione = (temp_mediana - t_ott) / (t_max - t_ott) if t_max != t_ott else 0
+        return gg_ott + frazione * (gg_max - gg_ott)
+
+
+def pioggia_residua_giorno(date_ordinate, dati, idx):
+    """Pioggia residua: 100% ultimi 10gg + 50% dei 10gg precedenti (11°-20° giorno prima)."""
+    idx_inizio_recenti = max(0, idx - 9)
+    recenti = sum(dati[date_ordinate[i]]["pioggia_mm"] for i in range(idx_inizio_recenti, idx + 1))
+
+    idx_fine_precedenti = idx_inizio_recenti - 1
+    idx_inizio_precedenti = max(0, idx_fine_precedenti - 9)
+    if idx_fine_precedenti >= 0:
+        precedenti = sum(dati[date_ordinate[i]]["pioggia_mm"] for i in range(idx_inizio_precedenti, idx_fine_precedenti + 1))
+    else:
+        precedenti = 0.0
+
+    return recenti + 0.5 * precedenti
+
+
+def temperatura_mediana_settimana(date_ordinate, dati, idx):
+    """Media delle temperature medie giornaliere dell'aria nell'ultima settimana (7gg)."""
+    idx_inizio = max(0, idx - 6)
+    valori = [dati[date_ordinate[i]]["temp_media"] for i in range(idx_inizio, idx + 1)]
+    return sum(valori) / len(valori)
+
+
+def calcola_stato_porcini(dati, tabella_temperature):
+    """
+    Calcola, per ogni giorno, pioggia residua, temperatura mediana, range
+    corrente (min/ottimale/max), se il giorno è "in range", e il conteggio
+    progressivo dei giorni di riproduzione del micelio (con la regola delle
+    interruzioni: una pausa di 1-3 giorni fuori range non azzera il conteggio,
+    oltre 3 giorni consecutivi fuori range il conteggio riparte da zero).
+    """
+    date_ordinate = sorted(dati.keys())
+    righe = []
+    giorni_consecutivi_in_range = 0
+    giorni_consecutivi_fuori_range = 0
+    picco_raggiunto = False
+    giorni_da_uscita_range = None
+
+    for idx, data_str in enumerate(date_ordinate):
+        p_residua = pioggia_residua_giorno(date_ordinate, dati, idx)
+        t_mediana = temperatura_mediana_settimana(date_ordinate, dati, idx)
+        t_min, t_ott, t_max = _interpola_tabella(tabella_temperature, p_residua)
+
+        in_range_pioggia = p_residua >= PIOGGIA_RESIDUA_MIN_TABELLA
+        in_range_temp = t_min <= t_mediana <= t_max
+        in_range = in_range_pioggia and in_range_temp
+
+        if in_range:
+            giorni_consecutivi_fuori_range = 0
+            giorni_consecutivi_in_range += 1
+        else:
+            giorni_consecutivi_fuori_range += 1
+            if giorni_consecutivi_fuori_range > 3:
+                giorni_consecutivi_in_range = 0  # riparte da zero
+            # se <= 3 giorni fuori range, il conteggio resta "in pausa" (non incrementa ma non si azzera)
+
+        giorni_necessari = _giorni_riproduzione_necessari(p_residua, t_mediana, t_min, t_ott, t_max)
+        fase_completata = giorni_consecutivi_in_range >= giorni_necessari
+
+        righe.append({
+            "data": data_str,
+            "pioggia_residua": round(p_residua, 1),
+            "temp_mediana": round(t_mediana, 1),
+            "temp_range_min": round(t_min, 1),
+            "temp_range_ott": round(t_ott, 1),
+            "temp_range_max": round(t_max, 1),
+            "in_range": in_range,
+            "giorni_in_range_consecutivi": giorni_consecutivi_in_range,
+            "giorni_necessari": round(giorni_necessari, 1),
+            "fase_completata": fase_completata,
+        })
+
+    return righe
+
+
+def stato_colore_porcini(riga):
+    """
+    Traduce lo stato del giorno nei 4 colori del modello originale:
+    Rosso: non ci sono le condizioni per la riproduzione
+    Giallo: condizioni giuste per la riproduzione (in corso)
+    Verde: condizioni giuste per la buttata (fase completata, ancora in range)
+    Blu: buttata in esaurimento (fase completata ma appena uscito dal range)
+    """
+    if riga["fase_completata"] and riga["in_range"]:
+        return "Verde", "🟢", "Condizioni per la buttata"
+    elif riga["fase_completata"] and not riga["in_range"]:
+        return "Blu", "🔵", "Buttata in esaurimento"
+    elif riga["in_range"]:
+        return "Giallo", "🟡", "In riproduzione, non ancora pronto"
+    else:
+        return "Rosso", "🔴", "Condizioni non favorevoli"
 
 
 # ----------------------------------------------------------------------------
@@ -384,10 +564,16 @@ if (cerca or cerca_automatica) and luogo_input.strip():
 
                 serie = {key: calcola_punteggi_giornalieri(dati, profilo) for key, profilo in PROFILI.items()}
 
+                # Modello statistico dedicato per i porcini (pioggia residua + temperatura mediana)
+                serie_porcini_edulis = calcola_stato_porcini(dati, TABELLA_EDULIS_PINOPHILUS)
+                serie_porcini_aereus = calcola_stato_porcini(dati, TABELLA_AEREUS_AESTIVALIS)
+
                 st.session_state["risultato"] = {
                     "geo": geo,
                     "oggi_str": oggi_str,
                     "serie": serie,
+                    "serie_porcini_edulis": serie_porcini_edulis,
+                    "serie_porcini_aereus": serie_porcini_aereus,
                     "modello_usato": modello_usato,
                     "elevazione": elevazione,
                 }
@@ -396,6 +582,14 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                 for key, righe in serie.items():
                     riga_oggi = next((r for r in righe if r["data"] == oggi_str), righe[-1])
                     punteggi_oggi[key] = riga_oggi["punteggio"]
+
+                # Per lo storico, traduciamo lo stato porcini in un punteggio 0-100 indicativo
+                # (Rosso=10, Giallo=50, Verde=90, Blu=70) così resta confrontabile con gli altri
+                mappa_punteggio_stato = {"Rosso": 10, "Giallo": 50, "Verde": 90, "Blu": 70}
+                riga_oggi_edulis = next((r for r in serie_porcini_edulis if r["data"] == oggi_str), serie_porcini_edulis[-1])
+                colore_edulis, _, _ = stato_colore_porcini(riga_oggi_edulis)
+                punteggi_oggi["porcini"] = mappa_punteggio_stato[colore_edulis]
+
                 salva_in_storico(geo["nome"], geo["regione"], oggi_str, punteggi_oggi)
 
             except requests.exceptions.RequestException as e:
@@ -448,6 +642,64 @@ if "risultato" in st.session_state:
         else:
             st.caption(riga_quota)
 
+
+    # --- Card Porcini: modello statistico dedicato (pioggia residua + temperatura mediana) ---
+    serie_porcini_edulis = r.get("serie_porcini_edulis", [])
+    serie_porcini_aereus = r.get("serie_porcini_aereus", [])
+
+    if serie_porcini_edulis:
+        riga_oggi_edulis = next((x for x in serie_porcini_edulis if x["data"] == oggi_str), serie_porcini_edulis[-1])
+        riga_oggi_aereus = next((x for x in serie_porcini_aereus if x["data"] == oggi_str), serie_porcini_aereus[-1])
+        colore_edulis, emoji_edulis, testo_edulis = stato_colore_porcini(riga_oggi_edulis)
+        colore_aereus, emoji_aereus, testo_aereus = stato_colore_porcini(riga_oggi_aereus)
+
+        with st.container():
+            st.markdown(f"<div class='specie-card'>", unsafe_allow_html=True)
+            st.markdown(
+                "<h3 style='margin-bottom:0'>Porcini</h3>"
+                "<p style='font-style:italic; color:#8A8270; font-size:12px; margin-top:-6px'>"
+                "Modello statistico: pioggia residua + temperatura mediana</p>",
+                unsafe_allow_html=True,
+            )
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**Edulis / Pinophilus** *(porcini di bosco)*")
+                st.markdown(f"### {emoji_edulis} {colore_edulis}")
+                st.caption(testo_edulis)
+            with col2:
+                st.markdown(f"**Aereus / Aestivalis** *(porcini estivi)*")
+                st.markdown(f"### {emoji_aereus} {colore_aereus}")
+                st.caption(testo_aereus)
+
+            st.write(f"**Pioggia residua:** {riga_oggi_edulis['pioggia_residua']} mm")
+            st.write(f"**Temperatura mediana (ultima settimana):** {riga_oggi_edulis['temp_mediana']}°C")
+            st.write(
+                f"**Range attuale Edulis/Pinophilus:** {riga_oggi_edulis['temp_range_min']}–"
+                f"{riga_oggi_edulis['temp_range_max']}°C (ottimale {riga_oggi_edulis['temp_range_ott']}°C)"
+            )
+            st.write(
+                f"**Giorni in range consecutivi:** {riga_oggi_edulis['giorni_in_range_consecutivi']} "
+                f"su {riga_oggi_edulis['giorni_necessari']:.0f} necessari per completare la riproduzione del micelio"
+            )
+
+            with st.expander("Diario di campo Porcini (28 giorni)"):
+                df_porcini = pd.DataFrame([
+                    {"data": x["data"], "pioggia_residua": x["pioggia_residua"], "temp_mediana": x["temp_mediana"]}
+                    for x in serie_porcini_edulis
+                ])
+                df_porcini["data"] = pd.to_datetime(df_porcini["data"])
+                df_porcini = df_porcini.set_index("data")
+                st.line_chart(df_porcini, use_container_width=True)
+                st.caption(
+                    "Linea pioggia residua (mm) e temperatura mediana (°C) — confronta con i range "
+                    "indicati sopra per capire l'andamento delle ultime settimane."
+                )
+
+            st.caption(
+                "🔴 Non favorevole · 🟡 In riproduzione (attendere) · 🟢 Condizioni per la buttata · "
+                "🔵 Buttata in esaurimento"
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
 
     for key, profilo in PROFILI.items():
         righe = serie[key]
@@ -511,3 +763,4 @@ if not storico_df.empty:
             if st.button("Ripeti", key=f"ripeti_{row['luogo']}"):
                 st.session_state["_ripeti_luogo"] = row["luogo"]
                 st.rerun()
+ 
