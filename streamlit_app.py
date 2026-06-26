@@ -763,4 +763,3 @@ if not storico_df.empty:
             if st.button("Ripeti", key=f"ripeti_{row['luogo']}"):
                 st.session_state["_ripeti_luogo"] = row["luogo"]
                 st.rerun()
- 
