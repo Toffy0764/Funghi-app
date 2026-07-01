@@ -752,8 +752,10 @@ if not storico_df.empty:
     )
     for _, row in luoghi_recenti.iterrows():
         punteggi_luogo = storico_df[(storico_df["luogo"] == row["luogo"]) & (storico_df["data"] == row["data"])]
+        ETICHETTE_SPECIE = {**{k: v["label"] for k, v in PROFILI.items()}, "porcini": "Porcini"}
         riassunto = "  ·  ".join(
-            f"{PROFILI[r['specie']]['label']}: {int(r['punteggio'])}" for _, r in punteggi_luogo.iterrows()
+            f"{ETICHETTE_SPECIE.get(r['specie'], r['specie'])}: {int(r['punteggio'])}"
+            for _, r in punteggi_luogo.iterrows()
         )
         col_a, col_b = st.columns([3, 1])
         with col_a:
