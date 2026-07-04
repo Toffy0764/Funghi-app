@@ -9,6 +9,87 @@ Per deploy: vedi README.md
 import streamlit as st
 import requests
 from datetime import datetime
+import re
+
+
+def parse_coordinate(testo: str):
+    """
+    Prova a interpretare il testo come una coppia di coordinate (lat, lon).
+    Accetta formati:
+      '46.023, 11.567'       (decimale internazionale)
+      '46.023 11.567'        (decimale con spazio)
+      '46,023; 11,567'       (decimale europeo)
+      '46.0234,11.5678'      (decimale senza spazi)
+      '46°05\'37.69"N 11°28\'22.00"E'  (DMS con simboli)
+    Restituisce (lat, lon) se riconosciuto, None altrimenti.
+    """
+    testo = testo.strip()
+
+    # --- Formato DMS: gradi°minuti'secondi"N/S gradi°minuti'secondi"E/W ---
+    dms_pattern = re.compile(
+        r"""(\d+)[°º][\s]*(\d+)[''′][\s]*(\d+(?:[.,]\d+)?)[\s]*[""″][\s]*([NSns])
+            [\s,]+
+            (\d+)[°º][\s]*(\d+)[''′][\s]*(\d+(?:[.,]\d+)?)[\s]*[""″][\s]*([EWOewo])""",
+        re.VERBOSE,
+    )
+    m = dms_pattern.search(testo)
+    if m:
+        def dms_to_dd(gradi, minuti, secondi, emisfero):
+            dd = float(gradi) + float(minuti) / 60 + float(secondi.replace(",", ".")) / 3600
+            if emisfero.upper() in ("S", "W", "O"):
+                dd = -dd
+            return dd
+        lat = dms_to_dd(m.group(1), m.group(2), m.group(3), m.group(4))
+        lon = dms_to_dd(m.group(5), m.group(6), m.group(7), m.group(8))
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            return lat, lon
+
+    # --- Formato europeo: punto e virgola come separatore ---
+    if ";" in testo:
+        parti = testo.split(";")
+        if len(parti) == 2:
+            try:
+                lat = float(parti[0].strip().replace(",", "."))
+                lon = float(parti[1].strip().replace(",", "."))
+                if -90 <= lat <= 90 and -180 <= lon <= 180:
+                    return lat, lon
+            except ValueError:
+                pass
+        return None
+
+    # --- Formato decimale con punto: split su virgola o spazio ---
+    parti = re.split(r"[,\s]+", testo)
+    if len(parti) == 2:
+        try:
+            lat = float(parti[0])
+            lon = float(parti[1])
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                return lat, lon
+        except ValueError:
+            pass
+    return None
+
+
+def risolvi_luogo(testo: str):
+    """
+    Risolve l'input utente in un dizionario geo.
+    Prova prima il parsing come coordinate; se non funziona, usa il geocoder.
+    """
+    coordinate = parse_coordinate(testo)
+    if coordinate:
+        lat, lon = coordinate
+        return {
+            "lat": lat,
+            "lon": lon,
+            "nome": f"{lat:.5f}, {lon:.5f}",
+            "regione": "",
+            "elevazione_luogo": None,
+            "da_coordinate": True,
+        }
+    geo = geocodifica(testo)
+    if geo:
+        geo["da_coordinate"] = False
+    return geo
 import pandas as pd
 
 # ----------------------------------------------------------------------------
@@ -538,17 +619,21 @@ st.caption(
 )
 
 luogo_default = st.session_state.pop("_ripeti_luogo", "")
-luogo_input = st.text_input("Luogo", value=luogo_default, placeholder="Es. Asiago, Monte Baldo, Aspromonte…")
+luogo_input = st.text_input(
+    "Luogo o coordinate",
+    value=luogo_default,
+    placeholder="Es. Asiago  oppure  46.023, 11.567",
+)
 cerca = st.button("Cerca", type="primary", use_container_width=True)
 cerca_automatica = bool(luogo_default)
 
 if (cerca or cerca_automatica) and luogo_input.strip():
     with st.spinner("Cerco il luogo e scarico i dati meteo…"):
-        geo = geocodifica(luogo_input)
+        geo = risolvi_luogo(luogo_input)
         if geo is None:
             st.error(
                 f"Nessun luogo trovato per **{luogo_input}**. "
-                "Provo con un nome più semplice (es. solo la città o il paese principale della zona)."
+                "Prova con un nome più semplice oppure inserisci le coordinate (es. 46.023, 11.567)."
             )
             st.session_state.pop("risultato", None)
         else:
