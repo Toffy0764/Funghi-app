@@ -70,19 +70,67 @@ def parse_coordinate(testo: str):
     return None
 
 
+def reverse_geocodifica(lat: float, lon: float):
+    """
+    Trova il nome della località più vicina alle coordinate date,
+    usando Nominatim (OpenStreetMap) — gratuito, senza API key.
+    Restituisce (nome, regione) oppure (None, None) se non trovato.
+    Nominatim richiede uno User-Agent non vuoto per policy di utilizzo.
+    """
+    try:
+        url = "https://nominatim.openstreetmap.org/reverse"
+        params = {
+            "lat": lat,
+            "lon": lon,
+            "format": "json",
+            "zoom": 10,          # livello "città/paese" (non strada)
+            "addressdetails": 1,
+        }
+        headers = {"User-Agent": "IndiceF ungaiolo/1.0"}
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        addr = data.get("address", {})
+        # Prova a ricavare il nome più specifico disponibile a livello "paese/comune"
+        nome = (
+            addr.get("village")
+            or addr.get("town")
+            or addr.get("municipality")
+            or addr.get("city")
+            or addr.get("county")
+            or data.get("name")
+            or data.get("display_name", "").split(",")[0]
+        )
+        regione = addr.get("state", "")
+        return nome, regione
+    except Exception:
+        return None, None
+
+
 def risolvi_luogo(testo: str):
     """
     Risolve l'input utente in un dizionario geo.
     Prova prima il parsing come coordinate; se non funziona, usa il geocoder.
+    Se le coordinate sono riconosciute, tenta il reverse geocoding per trovare
+    il nome della località più vicina (utile per lo storico e per il contesto).
     """
     coordinate = parse_coordinate(testo)
     if coordinate:
         lat, lon = coordinate
+        nome_vicino, regione_vicina = reverse_geocodifica(lat, lon)
+        # Se il reverse geocoding trova un nome, lo usa come etichetta
+        # ma indica che proviene da coordinate (così l'utente sa cosa ha cercato)
+        if nome_vicino:
+            nome = f"{nome_vicino} ({lat:.4f}, {lon:.4f})"
+            regione = regione_vicina or ""
+        else:
+            nome = f"{lat:.5f}, {lon:.5f}"
+            regione = ""
         return {
             "lat": lat,
             "lon": lon,
-            "nome": f"{lat:.5f}, {lon:.5f}",
-            "regione": "",
+            "nome": nome,
+            "regione": regione,
             "elevazione_luogo": None,
             "da_coordinate": True,
         }
