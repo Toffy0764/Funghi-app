@@ -752,6 +752,7 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                     "elevazione": elevazione,
                     "quota_bosco": quota_bosco,
                     "correzione_temp": round(correzione_temp, 2),
+                    "_dati_grezzi": dati,  # salvati per il calcolo della fascia altimetrica
                 }
 
                 punteggi_oggi = {}
@@ -942,6 +943,134 @@ if "risultato" in st.session_state:
                 st.bar_chart(df_grafico, color=profilo["colore"], use_container_width=True)
 
             st.markdown("</div>", unsafe_allow_html=True)
+
+# --- Fascia altimetrica ottimale ---
+if "risultato" in st.session_state:
+    r = st.session_state["risultato"]
+    elevazione_modello = r.get("elevazione")
+    oggi_str = r["oggi_str"]
+
+    st.markdown("---")
+    st.subheader("⛰️ Fascia altimetrica ottimale")
+    st.caption("Calcola le condizioni per ogni quota nella fascia che ti interessa, "
+               "correggendo la temperatura con il gradiente altimetrico (0.65°C/100m).")
+
+    col_min, col_max, col_step = st.columns(3)
+    with col_min:
+        quota_min = st.number_input("Quota minima (m)", min_value=0, max_value=2900,
+                                     value=600, step=100)
+    with col_max:
+        quota_max = st.number_input("Quota massima (m)", min_value=100, max_value=3000,
+                                     value=1600, step=100)
+    with col_step:
+        passo = st.selectbox("Passo (m)", [50, 100, 200], index=1)
+
+    if st.button("Calcola fascia altimetrica", type="secondary", use_container_width=True):
+        if quota_min >= quota_max:
+            st.error("La quota minima deve essere inferiore alla quota massima.")
+        elif elevazione_modello is None:
+            st.warning("Quota della cella meteo non disponibile — impossibile calcolare la correzione altimetrica.")
+        else:
+            dati = st.session_state["risultato"].get("_dati_grezzi")
+            if dati is None:
+                st.info("Premi prima 'Cerca' con un luogo per caricare i dati meteo, poi calcola la fascia.")
+            else:
+                quote = list(range(int(quota_min), int(quota_max) + 1, int(passo)))
+
+                # Mappa colore → valore numerico per ordinamento visivo
+                COLORE_VALORE = {"Verde": 3, "Blu": 2, "Giallo": 1, "Rosso": 0}
+                COLORE_HEX = {"Verde": "#4CAF50", "Blu": "#2196F3",
+                              "Giallo": "#FFC107", "Rosso": "#F44336"}
+                PUNTEGGIO_LABEL = {3: "🟢 Buttata", 2: "🔵 In esaurimento",
+                                   1: "🟡 In riproduzione", 0: "🔴 Non favorevole"}
+
+                righe_fascia = []
+                for quota in quote:
+                    diff = quota - elevazione_modello
+                    corr = -(diff * 0.65 / 100)
+                    dati_q = {}
+                    for data_str, valori in dati.items():
+                        dati_q[data_str] = {
+                            "pioggia_mm": valori["pioggia_mm"],
+                            "temp_max": round(valori["temp_max"] + corr, 2) if valori["temp_max"] is not None else None,
+                            "temp_min": round(valori["temp_min"] + corr, 2) if valori["temp_min"] is not None else None,
+                            "temp_media": round(valori["temp_media"] + corr, 2) if valori["temp_media"] is not None else None,
+                        }
+
+                    # Porcini Edulis
+                    righe_e = calcola_stato_porcini(dati_q, TABELLA_EDULIS_PINOPHILUS)
+                    oggi_e = next((x for x in righe_e if x["data"] == oggi_str), righe_e[-1])
+                    col_e, _, _ = stato_colore_porcini(oggi_e)
+
+                    # Porcini Aereus
+                    righe_a = calcola_stato_porcini(dati_q, TABELLA_AEREUS_AESTIVALIS)
+                    oggi_a = next((x for x in righe_a if x["data"] == oggi_str), righe_a[-1])
+                    col_a, _, _ = stato_colore_porcini(oggi_a)
+
+                    # Finferli e Russule
+                    stati_generici = {}
+                    for key, profilo in PROFILI.items():
+                        serie_q = calcola_punteggi_giornalieri(dati_q, profilo)
+                        oggi_q = next((x for x in serie_q if x["data"] == oggi_str), serie_q[-1])
+                        stati_generici[key] = oggi_q["punteggio"]
+
+                    righe_fascia.append({
+                        "quota": quota,
+                        "temp_mediana": oggi_e["temp_mediana"],
+                        "pioggia_residua": oggi_e["pioggia_residua"],
+                        "porcini_edulis": col_e,
+                        "porcini_aereus": col_a,
+                        "finferli": stati_generici.get("finferli", 0),
+                        "russule": stati_generici.get("russule", 0),
+                    })
+
+                # Grafico porcini Edulis
+                st.markdown("**Porcini Edulis/Pinophilus**")
+                for rr in righe_fascia:
+                    colore_hex = COLORE_HEX[rr["porcini_edulis"]]
+                    valore = COLORE_VALORE[rr["porcini_edulis"]]
+                    label = PUNTEGGIO_LABEL[valore]
+                    st.markdown(
+                        f"<div style='display:flex;align-items:center;gap:10px;margin:3px 0'>"
+                        f"<span style='width:60px;text-align:right;font-size:13px'><b>{rr['quota']}m</b></span>"
+                        f"<div style='height:22px;width:{max(4, valore/3*100):.0f}%;background:{colore_hex};"
+                        f"border-radius:4px;min-width:4px'></div>"
+                        f"<span style='font-size:12px;color:#B5AD98'>{label} · {rr['temp_mediana']}°C</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                st.markdown("<br>**Porcini Aereus/Aestivalis**", unsafe_allow_html=True)
+                for rr in righe_fascia:
+                    colore_hex = COLORE_HEX[rr["porcini_aereus"]]
+                    valore = COLORE_VALORE[rr["porcini_aereus"]]
+                    label = PUNTEGGIO_LABEL[valore]
+                    st.markdown(
+                        f"<div style='display:flex;align-items:center;gap:10px;margin:3px 0'>"
+                        f"<span style='width:60px;text-align:right;font-size:13px'><b>{rr['quota']}m</b></span>"
+                        f"<div style='height:22px;width:{max(4, valore/3*100):.0f}%;background:{colore_hex};"
+                        f"border-radius:4px;min-width:4px'></div>"
+                        f"<span style='font-size:12px;color:#B5AD98'>{label} · {rr['temp_mediana']}°C</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                for key, profilo in PROFILI.items():
+                    st.markdown(f"<br>**{profilo['label']}**", unsafe_allow_html=True)
+                    for rr in righe_fascia:
+                        punteggio = rr[key]
+                        et, _ = etichetta(punteggio)
+                        colore_hex = {"Ottimo": "#4CAF50", "Buono": "#8BC34A",
+                                      "Possibile": "#FFC107", "Scarso": "#F44336"}.get(et, "#888")
+                        st.markdown(
+                            f"<div style='display:flex;align-items:center;gap:10px;margin:3px 0'>"
+                            f"<span style='width:60px;text-align:right;font-size:13px'><b>{rr['quota']}m</b></span>"
+                            f"<div style='height:22px;width:{max(4, punteggio):.0f}%;background:{colore_hex};"
+                            f"border-radius:4px;min-width:4px'></div>"
+                            f"<span style='font-size:12px;color:#B5AD98'>{et} ({int(punteggio)}/100) · {rr['temp_mediana']}°C</span>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
 
 # --- Storico ---
 storico_df = carica_storico()
