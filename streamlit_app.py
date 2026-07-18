@@ -672,6 +672,19 @@ luogo_input = st.text_input(
     value=luogo_default,
     placeholder="Es. Asiago  oppure  46.023, 11.567",
 )
+
+quota_bosco = st.number_input(
+    "Quota del tuo bosco (m) — opzionale",
+    min_value=0,
+    max_value=3000,
+    value=0,
+    step=50,
+    help="Se inserisci la quota reale del bosco, l'app corregge la temperatura "
+         "rispetto alla quota della cella meteo (gradiente 0.65°C/100m). "
+         "Lascia 0 per usare i dati meteo senza correzione.",
+)
+quota_bosco = int(quota_bosco) if quota_bosco > 0 else None
+
 cerca = st.button("Cerca", type="primary", use_container_width=True)
 cerca_automatica = bool(luogo_default)
 
@@ -695,20 +708,50 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                     candidati = [d for d in date_ordinate if d <= oggi_candidata]
                     oggi_str = candidati[-1] if candidati else date_ordinate[-1]
 
-                serie = {key: calcola_punteggi_giornalieri(dati, profilo) for key, profilo in PROFILI.items()}
+                # Correzione altimetrica della temperatura
+                # Se l'utente ha inserito una quota bosco E abbiamo la quota della cella meteo,
+                # calcoliamo la differenza e correggiamo tutte le temperature.
+                # Gradiente adiabatico standard: -0.65°C ogni 100m di quota.
+                # Se il bosco è più in alto della cella → temperatura reale più bassa (correzione negativa)
+                # Se il bosco è più in basso della cella → temperatura reale più alta (correzione positiva)
+                correzione_temp = 0.0
+                dati_corretti = dati  # default: nessuna correzione
+                if quota_bosco is not None and elevazione is not None:
+                    diff_quota = quota_bosco - elevazione  # positivo = bosco più in alto
+                    correzione_temp = -(diff_quota * 0.65 / 100)  # negativo se bosco più in alto
+                    # Applica correzione a una copia dei dati
+                    dati_corretti = {}
+                    for data_str, valori in dati.items():
+                        dati_corretti[data_str] = {
+                            "pioggia_mm": valori["pioggia_mm"],
+                            "temp_max": round(valori["temp_max"] + correzione_temp, 2) if valori["temp_max"] is not None else None,
+                            "temp_min": round(valori["temp_min"] + correzione_temp, 2) if valori["temp_min"] is not None else None,
+                            "temp_media": round(valori["temp_media"] + correzione_temp, 2) if valori["temp_media"] is not None else None,
+                        }
 
-                # Modello statistico dedicato per i porcini (pioggia residua + temperatura mediana)
-                serie_porcini_edulis = calcola_stato_porcini(dati, TABELLA_EDULIS_PINOPHILUS)
-                serie_porcini_aereus = calcola_stato_porcini(dati, TABELLA_AEREUS_AESTIVALIS)
+                # Calcola con dati originali (per mostrare il confronto)
+                serie_originale = {key: calcola_punteggi_giornalieri(dati, profilo) for key, profilo in PROFILI.items()}
+                serie_porcini_edulis_orig = calcola_stato_porcini(dati, TABELLA_EDULIS_PINOPHILUS)
+                serie_porcini_aereus_orig = calcola_stato_porcini(dati, TABELLA_AEREUS_AESTIVALIS)
+
+                # Calcola con dati corretti per quota (o identici se nessuna correzione)
+                serie = {key: calcola_punteggi_giornalieri(dati_corretti, profilo) for key, profilo in PROFILI.items()}
+                serie_porcini_edulis = calcola_stato_porcini(dati_corretti, TABELLA_EDULIS_PINOPHILUS)
+                serie_porcini_aereus = calcola_stato_porcini(dati_corretti, TABELLA_AEREUS_AESTIVALIS)
 
                 st.session_state["risultato"] = {
                     "geo": geo,
                     "oggi_str": oggi_str,
                     "serie": serie,
+                    "serie_originale": serie_originale,
                     "serie_porcini_edulis": serie_porcini_edulis,
                     "serie_porcini_aereus": serie_porcini_aereus,
+                    "serie_porcini_edulis_orig": serie_porcini_edulis_orig,
+                    "serie_porcini_aereus_orig": serie_porcini_aereus_orig,
                     "modello_usato": modello_usato,
                     "elevazione": elevazione,
+                    "quota_bosco": quota_bosco,
+                    "correzione_temp": round(correzione_temp, 2),
                 }
 
                 punteggi_oggi = {}
@@ -737,6 +780,8 @@ if "risultato" in st.session_state:
     modello_usato = r.get("modello_usato", "Best-match globale")
     elevazione_modello = r.get("elevazione")
     elevazione_luogo = geo.get("elevazione_luogo")
+    quota_bosco = r.get("quota_bosco")
+    correzione_temp = r.get("correzione_temp", 0.0)
 
     data_leggibile = datetime.strptime(oggi_str, "%Y-%m-%d").strftime("%-d %B")
     st.subheader(f"{geo['nome']}{', ' + geo['regione'] if geo['regione'] else ''}")
@@ -750,31 +795,56 @@ if "risultato" in st.session_state:
     )
     if modello_usato.startswith("ICON-D2"):
         st.caption(
-            f"🎯 Modello: **{modello_usato}** — alta risoluzione (~2km), ottimo per zone alpine/Nord Italia. "
-            "Non è una singola stazione fisica, ma una cella di griglia molto piccola centrata su queste coordinate."
+            f"🎯 Modello: **{modello_usato}** — alta risoluzione (~2km), ottimo per zone alpine/Nord Italia."
         )
     else:
         st.caption(
-            f"🌍 Modello: **{modello_usato}** — ICON-D2 non disponibile per questo punto "
-            "(fuori area Centro Europa o dati incompleti), uso il modello globale generico."
+            f"🌍 Modello: **{modello_usato}** — ICON-D2 non disponibile, uso il modello globale generico."
         )
 
     if elevazione_modello is not None:
-        riga_quota = f"⛰️ Altitudine della cella meteo usata: **{elevazione_modello:.0f} m**"
-        if elevazione_luogo is not None:
-            diff = elevazione_modello - elevazione_luogo
-            riga_quota += f" (il luogo cercato è a ~{elevazione_luogo:.0f} m)"
-            if abs(diff) >= 150:
-                st.warning(
-                    riga_quota + f" — differenza di **{diff:+.0f} m**: a questa quota la temperatura "
-                    f"reale nel punto preciso che ti interessa può discostarsi di circa "
-                    f"{abs(diff) * 0.65 / 100:.1f}°C da quella calcolata (gradiente medio ~0.65°C/100m)."
+        riga_quota = f"⛰️ Altitudine cella meteo: **{elevazione_modello:.0f} m**"
+        if quota_bosco is not None:
+            diff_quota = quota_bosco - elevazione_modello
+            segno = "+" if correzione_temp > 0 else ""
+            if correzione_temp != 0:
+                st.info(
+                    f"{riga_quota} · Quota tuo bosco: **{quota_bosco} m** "
+                    f"(differenza {diff_quota:+.0f} m) · "
+                    f"Correzione temperatura applicata: **{segno}{correzione_temp:.2f}°C** "
+                    f"su tutte le specie"
                 )
             else:
-                st.caption(riga_quota + f" (differenza {diff:+.0f} m, trascurabile)")
+                st.caption(f"{riga_quota} · Quota bosco: **{quota_bosco} m** — differenza trascurabile, nessuna correzione applicata")
+        elif elevazione_luogo is not None:
+            diff = elevazione_modello - elevazione_luogo
+            if abs(diff) >= 150:
+                st.warning(
+                    f"{riga_quota} (luogo cercato ~{elevazione_luogo:.0f} m) — "
+                    f"differenza **{diff:+.0f} m**: considera di inserire la quota del tuo bosco per una correzione precisa."
+                )
+            else:
+                st.caption(f"{riga_quota} (differenza {diff:+.0f} m dalla quota del luogo, trascurabile)")
         else:
             st.caption(riga_quota)
 
+    # Mostra confronto temperature se è stata applicata una correzione
+    if quota_bosco is not None and correzione_temp != 0 and "serie_porcini_edulis_orig" in r:
+        riga_orig = next((x for x in r["serie_porcini_edulis_orig"] if x["data"] == oggi_str), None)
+        riga_corr = next((x for x in r["serie_porcini_edulis"] if x["data"] == oggi_str), None)
+        if riga_orig and riga_corr:
+            with st.expander("🌡️ Confronto temperature: cella meteo vs quota bosco"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Cella meteo ({elevazione_modello:.0f} m)**")
+                    st.write(f"Temp. mediana: {riga_orig['temp_mediana']}°C")
+                with col2:
+                    st.markdown(f"**Quota bosco ({quota_bosco} m)**")
+                    st.write(f"Temp. mediana corretta: {riga_corr['temp_mediana']}°C")
+                st.caption(
+                    f"Correzione applicata: {'+' if correzione_temp > 0 else ''}{correzione_temp:.2f}°C "
+                    f"(gradiente 0.65°C/100m × {quota_bosco - elevazione_modello:+.0f} m)"
+                )
 
     # --- Card Porcini: modello statistico dedicato (pioggia residua + temperatura mediana) ---
     serie_porcini_edulis = r.get("serie_porcini_edulis", [])
