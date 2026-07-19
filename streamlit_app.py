@@ -385,7 +385,7 @@ def stato_colore_porcini(riga):
 # ----------------------------------------------------------------------------
 # Stessa logica dei porcini (pioggia residua + temperatura mediana + giorni
 # di riproduzione del micelio), ma con tabelle diverse dal libro di Zoffoli.
-# I galletti hanno range di temperatura più basso rispetto ai porcini,
+# I finferli hanno range di temperatura più basso rispetto ai porcini,
 # quindi spesso escono 1-2 giorni prima.
 
 TABELLA_GALLETTI = [
@@ -413,8 +413,8 @@ PIOGGIA_GALLETTI_MIN = 55
 PIOGGIA_GALLETTI_MAX = 160
 
 
-def _giorni_riproduzione_galletti(pioggia_residua, temp_mediana, t_min, t_ott, t_max):
-    """Giorni di riproduzione micelio galletti, interpolando la tabella dedicata."""
+def _giorni_riproduzione_finferli(pioggia_residua, temp_mediana, t_min, t_ott, t_max):
+    """Giorni di riproduzione micelio finferli, interpolando la tabella dedicata."""
     p = max(PIOGGIA_GALLETTI_MIN, min(PIOGGIA_GALLETTI_MAX, pioggia_residua))
     riga = None
     for i in range(len(TABELLA_GIORNI_RIPRODUZIONE_GALLETTI) - 1):
@@ -440,9 +440,9 @@ def _giorni_riproduzione_galletti(pioggia_residua, temp_mediana, t_min, t_ott, t
         return gg_ott + frazione * (gg_max - gg_ott)
 
 
-def calcola_stato_galletti(dati):
+def calcola_stato_finferli(dati):
     """
-    Calcola lo stato giornaliero per i galletti secondo il modello statistico
+    Calcola lo stato giornaliero per i finferli secondo il modello statistico
     del libro (tabelle pioggia residua + temperatura mediana + giorni micelio).
     Stessa logica interruzioni dei porcini (pausa ≤3gg non azzera, >3gg azzera).
     """
@@ -455,8 +455,8 @@ def calcola_stato_galletti(dati):
         p_residua = pioggia_residua_giorno(date_ordinate, dati, idx)
         t_mediana = temperatura_mediana_settimana(date_ordinate, dati, idx)
 
-        # Interpola la tabella galletti (stessa funzione _interpola_tabella,
-        # ma clampata sui limiti della tabella galletti)
+        # Interpola la tabella finferli (stessa funzione _interpola_tabella,
+        # ma clampata sui limiti della tabella finferli)
         p_clamp = max(PIOGGIA_GALLETTI_MIN, min(PIOGGIA_GALLETTI_MAX, p_residua))
         t_min, t_ott, t_max = _interpola_tabella(TABELLA_GALLETTI, p_clamp)
 
@@ -472,7 +472,7 @@ def calcola_stato_galletti(dati):
             if giorni_consecutivi_fuori_range > 3:
                 giorni_consecutivi_in_range = 0
 
-        giorni_necessari = _giorni_riproduzione_galletti(p_residua, t_mediana, t_min, t_ott, t_max)
+        giorni_necessari = _giorni_riproduzione_finferli(p_residua, t_mediana, t_min, t_ott, t_max)
         fase_completata = giorni_consecutivi_in_range >= giorni_necessari
 
         righe.append({
@@ -824,13 +824,13 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                 serie_originale = {key: calcola_punteggi_giornalieri(dati, profilo) for key, profilo in PROFILI.items()}
                 serie_porcini_edulis_orig = calcola_stato_porcini(dati, TABELLA_EDULIS_PINOPHILUS)
                 serie_porcini_aereus_orig = calcola_stato_porcini(dati, TABELLA_AEREUS_AESTIVALIS)
-                serie_galletti_orig = calcola_stato_galletti(dati)
+                serie_finferli_orig = calcola_stato_finferli(dati)
 
                 # Calcola con dati corretti per quota
                 serie = {key: calcola_punteggi_giornalieri(dati_corretti, profilo) for key, profilo in PROFILI.items()}
                 serie_porcini_edulis = calcola_stato_porcini(dati_corretti, TABELLA_EDULIS_PINOPHILUS)
                 serie_porcini_aereus = calcola_stato_porcini(dati_corretti, TABELLA_AEREUS_AESTIVALIS)
-                serie_galletti = calcola_stato_galletti(dati_corretti)
+                serie_finferli = calcola_stato_finferli(dati_corretti)
 
                 st.session_state["risultato"] = {
                     "geo": geo,
@@ -841,8 +841,8 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                     "serie_porcini_aereus": serie_porcini_aereus,
                     "serie_porcini_edulis_orig": serie_porcini_edulis_orig,
                     "serie_porcini_aereus_orig": serie_porcini_aereus_orig,
-                    "serie_galletti": serie_galletti,
-                    "serie_galletti_orig": serie_galletti_orig,
+                    "serie_finferli": serie_finferli,
+                    "serie_finferli_orig": serie_finferli_orig,
                     "modello_usato": modello_usato,
                     "elevazione": elevazione,
                     "quota_bosco": quota_bosco,
@@ -862,9 +862,9 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                 colore_edulis, _, _ = stato_colore_porcini(riga_oggi_edulis)
                 punteggi_oggi["porcini"] = mappa_punteggio_stato[colore_edulis]
 
-                riga_oggi_galletti = next((r for r in serie_galletti if r["data"] == oggi_str), serie_galletti[-1])
-                colore_galletti, _, _ = stato_colore_porcini(riga_oggi_galletti)
-                punteggi_oggi["galletti"] = mappa_punteggio_stato[colore_galletti]
+                riga_oggi_finferli = next((r for r in serie_finferli if r["data"] == oggi_str), serie_finferli[-1])
+                colore_finferli, _, _ = stato_colore_porcini(riga_oggi_finferli)
+                punteggi_oggi["finferli"] = mappa_punteggio_stato[colore_finferli]
 
                 salva_in_storico(geo["nome"], geo["regione"], oggi_str, punteggi_oggi)
 
@@ -1004,16 +1004,16 @@ if "risultato" in st.session_state:
             )
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- Card Galletti: modello statistico dedicato ---
-    serie_galletti = r.get("serie_galletti", [])
-    if serie_galletti:
-        riga_oggi_g = next((x for x in serie_galletti if x["data"] == oggi_str), serie_galletti[-1])
+    # --- Card Finferli: modello statistico dedicato ---
+    serie_finferli = r.get("serie_finferli", [])
+    if serie_finferli:
+        riga_oggi_g = next((x for x in serie_finferli if x["data"] == oggi_str), serie_finferli[-1])
         colore_g, emoji_g, testo_g = stato_colore_porcini(riga_oggi_g)
 
         with st.container():
             st.markdown("<div class='specie-card'>", unsafe_allow_html=True)
             st.markdown(
-                "<h3 style='margin-bottom:0'>Galletti</h3>"
+                "<h3 style='margin-bottom:0'>Finferli</h3>"
                 "<p style='font-style:italic; color:#8A8270; font-size:12px; margin-top:-6px'>"
                 "Cantharellus cibarius — modello statistico Zoffoli</p>",
                 unsafe_allow_html=True,
@@ -1035,11 +1035,11 @@ if "risultato" in st.session_state:
                     f"su {riga_oggi_g['giorni_necessari']:.0f} necessari"
                 )
 
-            with st.expander("Diario di campo Galletti (28 giorni)"):
+            with st.expander("Diario di campo Finferli (28 giorni)"):
                 df_g = pd.DataFrame([
                     {"data": x["data"], "pioggia_residua": x["pioggia_residua"],
                      "temp_mediana": x["temp_mediana"]}
-                    for x in serie_galletti
+                    for x in serie_finferli
                 ])
                 df_g["data"] = pd.to_datetime(df_g["data"])
                 df_g = df_g.set_index("data")
@@ -1230,7 +1230,7 @@ if not storico_df.empty:
     )
     for _, row in luoghi_recenti.iterrows():
         punteggi_luogo = storico_df[(storico_df["luogo"] == row["luogo"]) & (storico_df["data"] == row["data"])]
-        ETICHETTE_SPECIE = {**{k: v["label"] for k, v in PROFILI.items()}, "porcini": "Porcini", "galletti": "Galletti"}
+        ETICHETTE_SPECIE = {**{k: v["label"] for k, v in PROFILI.items()}, "porcini": "Porcini", "finferli": "Finferli"}
         riassunto = "  ·  ".join(
             f"{ETICHETTE_SPECIE.get(r['specie'], r['specie'])}: {int(r['punteggio'])}"
             for _, r in punteggi_luogo.iterrows()
