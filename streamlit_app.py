@@ -10,6 +10,9 @@ import streamlit as st
 import requests
 from datetime import datetime
 import re
+import concurrent.futures
+import folium
+from streamlit_folium import st_folium
 
 
 def parse_coordinate(testo: str):
@@ -1314,6 +1317,218 @@ if "risultato" in st.session_state:
                             f"</div>",
                             unsafe_allow_html=True,
                         )
+
+# --- Screening zone verdi ---
+st.markdown("---")
+st.subheader("🗺️ Screening zone verdi — Porcini")
+st.caption(
+    "Scansiona una griglia di punti su una regione e mostra su mappa le aree "
+    "con condizioni favorevoli per i porcini oggi. "
+    "Ogni punto = cella ICON-D2 (~15km di distanza). Attesa: 30-60 secondi."
+)
+
+REGIONI_NORD_ITALIA = {
+    "Veneto":               (45.0, 47.1, 10.6, 12.8),
+    "Lombardia":            (44.7, 46.7,  8.5, 11.4),
+    "Piemonte":             (44.0, 46.5,  6.6,  9.2),
+    "Trentino-Alto Adige":  (45.7, 47.1, 10.4, 12.5),
+    "Friuli-Venezia Giulia":(45.6, 46.7, 12.3, 13.9),
+    "Valle d'Aosta":        (45.5, 45.9,  6.8,  7.9),
+    "Liguria":              (43.8, 44.7,  6.6,  9.9),
+    "Emilia-Romagna":       (43.7, 45.1,  9.2, 12.8),
+}
+
+COLORI_FOLIUM = {
+    "Verde": "green",
+    "Blu":   "blue",
+    "Giallo":"orange",
+    "Rosso": "red",
+}
+
+def griglia_punti(lat_min, lat_max, lon_min, lon_max, passo_gradi=0.13):
+    """Genera una griglia di punti (lat, lon) nella bounding box con il passo dato.
+    0.13 gradi ≈ 14km in latitudine, abbastanza per avere 40-80 punti su una regione."""
+    punti = []
+    lat = lat_min
+    while lat <= lat_max:
+        lon = lon_min
+        while lon <= lon_max:
+            punti.append((round(lat, 4), round(lon, 4)))
+            lon += passo_gradi
+        lat += passo_gradi
+    return punti
+
+
+def scarica_e_calcola_punto(lat, lon, oggi_str):
+    """Scarica i dati meteo per un singolo punto e calcola lo stato porcini Edulis."""
+    try:
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": lat, "longitude": lon,
+            "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean",
+            "timezone": "auto", "past_days": 20, "forecast_days": 1,
+            "models": "icon_d2",
+        }
+        r = requests.get(url, params=params, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        daily = data["daily"]
+
+        # Verifica dati validi
+        if not daily["time"] or daily["temperature_2m_mean"][0] is None:
+            return None
+
+        dati = {}
+        for i, d in enumerate(daily["time"]):
+            dati[d] = {
+                "pioggia_mm": daily["precipitation_sum"][i] or 0.0,
+                "temp_max":   daily["temperature_2m_max"][i],
+                "temp_min":   daily["temperature_2m_min"][i],
+                "temp_media": daily["temperature_2m_mean"][i],
+            }
+
+        elevazione = data.get("elevation", 0)
+        righe = calcola_stato_porcini(dati, TABELLA_EDULIS_PINOPHILUS)
+        if not righe:
+            return None
+
+        # Trova la riga di oggi (o l'ultima disponibile)
+        riga = next((x for x in righe if x["data"] == oggi_str), righe[-1])
+        colore, _, testo = stato_colore_porcini(riga)
+        bonus = riga.get("bonus_shock", 0)
+
+        return {
+            "lat": lat, "lon": lon,
+            "colore": colore,
+            "testo": testo,
+            "elevazione": int(elevazione),
+            "pioggia_residua": riga["pioggia_residua"],
+            "temp_mediana": riga["temp_mediana"],
+            "giorni_consec": riga["giorni_in_range_consecutivi"],
+            "giorni_necessari": riga["giorni_necessari"],
+            "sbalzo": riga.get("sbalzo_termico", 0),
+            "bonus_shock": bonus,
+        }
+    except Exception:
+        return None
+
+
+regione_scelta = st.selectbox(
+    "Seleziona regione",
+    list(REGIONI_NORD_ITALIA.keys()),
+    index=0
+)
+
+col_s1, col_s2 = st.columns(2)
+with col_s1:
+    quota_min_screen = st.number_input(
+        "Quota minima da considerare (m)",
+        min_value=0, max_value=2000, value=400, step=100,
+        help="Punti con elevazione inferiore vengono esclusi dalla mappa"
+    )
+with col_s2:
+    quota_max_screen = st.number_input(
+        "Quota massima da considerare (m)",
+        min_value=100, max_value=3000, value=1800, step=100
+    )
+
+avvia_screening = st.button(
+    "🔍 Avvia screening", type="secondary", use_container_width=True
+)
+
+if avvia_screening:
+    lat_min, lat_max, lon_min, lon_max = REGIONI_NORD_ITALIA[regione_scelta]
+    punti = griglia_punti(lat_min, lat_max, lon_min, lon_max)
+    oggi_str_screen = datetime.now().strftime("%Y-%m-%d")
+
+    st.info(f"Analisi di {len(punti)} punti su {regione_scelta}... attendere.")
+    barra = st.progress(0)
+    risultati = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(scarica_e_calcola_punto, lat, lon, oggi_str_screen): (lat, lon)
+            for lat, lon in punti
+        }
+        completati = 0
+        for future in concurrent.futures.as_completed(futures):
+            completati += 1
+            barra.progress(completati / len(punti))
+            res = future.result()
+            if res:
+                risultati.append(res)
+
+    barra.empty()
+
+    # Filtra per quota
+    risultati_filtrati = [
+        r for r in risultati
+        if quota_min_screen <= r["elevazione"] <= quota_max_screen
+    ]
+
+    if not risultati_filtrati:
+        st.warning("Nessun punto trovato nella fascia di quota selezionata. Prova ad allargare il range.")
+    else:
+        # Conta per colore
+        conteggi = {"Verde": 0, "Blu": 0, "Giallo": 0, "Rosso": 0}
+        for r in risultati_filtrati:
+            conteggi[r["colore"]] = conteggi.get(r["colore"], 0) + 1
+
+        col_v, col_b, col_g, col_r = st.columns(4)
+        col_v.metric("🟢 Buttata", conteggi["Verde"])
+        col_b.metric("🔵 Esaurimento", conteggi["Blu"])
+        col_g.metric("🟡 In riproduzione", conteggi["Giallo"])
+        col_r.metric("🔴 Non favorevole", conteggi["Rosso"])
+
+        # Costruisci mappa Folium
+        centro_lat = (lat_min + lat_max) / 2
+        centro_lon = (lon_min + lon_max) / 2
+        mappa = folium.Map(
+            location=[centro_lat, centro_lon],
+            zoom_start=8,
+            tiles="OpenStreetMap"
+        )
+
+        for res in risultati_filtrati:
+            colore_f = COLORI_FOLIUM.get(res["colore"], "gray")
+            popup_html = (
+                f"<b>{res['colore']}</b> — {res['testo']}<br>"
+                f"Quota: {res['elevazione']} m<br>"
+                f"Pioggia residua: {res['pioggia_residua']} mm<br>"
+                f"Temp. mediana: {res['temp_mediana']}°C<br>"
+                f"Giorni in range: {res['giorni_consec']}/{res['giorni_necessari']:.0f}<br>"
+                f"Sbalzo termico: {res['sbalzo']}°C"
+                + (f" (+{res['bonus_shock']} pts)" if res['bonus_shock'] > 0 else "")
+            )
+            folium.CircleMarker(
+                location=[res["lat"], res["lon"]],
+                radius=10,
+                color=colore_f,
+                fill=True,
+                fill_color=colore_f,
+                fill_opacity=0.7,
+                popup=folium.Popup(popup_html, max_width=250),
+                tooltip=f"{res['colore']} · {res['elevazione']}m",
+            ).add_to(mappa)
+
+        st_folium(mappa, width=700, height=500)
+
+        # Lista punti verdi/blu
+        migliori = [r for r in risultati_filtrati if r["colore"] in ("Verde", "Blu")]
+        migliori.sort(key=lambda x: (x["colore"] == "Verde", x["pioggia_residua"]), reverse=True)
+        if migliori:
+            st.markdown("**Punti con condizioni favorevoli (tocca per aprire la mappa):**")
+            for res in migliori[:10]:
+                emoji = "🟢" if res["colore"] == "Verde" else "🔵"
+                mappa_url = (
+                    f"https://www.openstreetmap.org/?mlat={res['lat']}"
+                    f"&mlon={res['lon']}#map=13/{res['lat']}/{res['lon']}"
+                )
+                st.markdown(
+                    f"{emoji} [{res['lat']:.3f}, {res['lon']:.3f}]({mappa_url}) · "
+                    f"{res['elevazione']}m · pioggia residua {res['pioggia_residua']}mm · "
+                    f"temp. mediana {res['temp_mediana']}°C"
+                )
 
 # --- Storico ---
 storico_df = carica_storico()
