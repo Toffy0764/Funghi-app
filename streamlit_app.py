@@ -1359,6 +1359,7 @@ def griglia_punti(lat_min, lat_max, lon_min, lon_max, passo_gradi=0.13):
     return punti
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
 def scarica_e_calcola_punto(lat, lon, oggi_str):
     """Scarica i dati meteo per un singolo punto e calcola lo stato porcini Edulis."""
     try:
