@@ -732,6 +732,43 @@ def salva_in_storico(luogo, regione, oggi_str, punteggi_oggi):
 
 
 # ----------------------------------------------------------------------------
+# DIARIO USCITE
+# ----------------------------------------------------------------------------
+
+DIARIO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "diario_uscite.csv")
+COLONNE_DIARIO = [
+    "data_uscita", "luogo", "quota", "specie_trovate",
+    "quantita", "punteggio_app_porcini", "punteggio_app_finferli",
+    "punteggio_app_russule", "note", "registrato_il"
+]
+QUANTITA_OPZIONI = ["Ottima 🟢", "Buona 🟡", "Scarsa 🟠", "Nessuna 🔴"]
+SPECIE_OPZIONI = ["Porcini Edulis/Pinophilus", "Porcini Aereus/Aestivalis",
+                  "Finferli", "Russule", "Altro"]
+
+
+def carica_diario():
+    if os.path.isfile(DIARIO_PATH):
+        try:
+            return pd.read_csv(DIARIO_PATH)
+        except Exception:
+            return pd.DataFrame(columns=COLONNE_DIARIO)
+    return pd.DataFrame(columns=COLONNE_DIARIO)
+
+
+def salva_uscita(riga):
+    df = carica_diario()
+    nuovo = pd.DataFrame([riga])
+    df = pd.concat([df, nuovo], ignore_index=True)
+    df.to_csv(DIARIO_PATH, index=False)
+
+
+def elimina_uscita(idx):
+    df = carica_diario()
+    df = df.drop(index=idx).reset_index(drop=True)
+    df.to_csv(DIARIO_PATH, index=False)
+
+
+# ----------------------------------------------------------------------------
 # INTERFACCIA
 # ----------------------------------------------------------------------------
 
@@ -1246,3 +1283,101 @@ if not storico_df.empty:
             if st.button("Ripeti", key=f"ripeti_{row['luogo']}"):
                 st.session_state["_ripeti_luogo"] = row["luogo"]
                 st.rerun()
+
+# --- Diario Uscite ---
+st.markdown("---")
+st.subheader("📓 Diario Uscite")
+st.caption("Registra ogni uscita con quello che hai trovato — confrontato con i punteggi dell'app, "
+           "ti aiuta ad affinare i parametri nel tempo.")
+
+# Form inserimento nuova uscita
+with st.expander("➕ Aggiungi nuova uscita", expanded=False):
+    col1, col2 = st.columns(2)
+    with col1:
+        data_uscita = st.date_input("Data dell'uscita", value=datetime.now().date())
+        luogo_uscita = st.text_input("Luogo", placeholder="Es. Asiago, Bosco di Schio…")
+        quota_uscita = st.number_input("Quota (m)", min_value=0, max_value=3000, value=0, step=50)
+    with col2:
+        specie_trovate = st.multiselect("Specie trovate", SPECIE_OPZIONI)
+        quantita = st.selectbox("Quantità trovata", QUANTITA_OPZIONI)
+        note = st.text_area("Note libere", placeholder="Tipo di bosco, esposizione, condizioni terreno, osservazioni…", height=100)
+
+    # Punteggi app del giorno (presi dallo storico se disponibili)
+    storico_df_full = carica_storico()
+    data_str_uscita = data_uscita.strftime("%Y-%m-%d")
+    luogo_norm = luogo_uscita.strip()
+
+    def punteggio_storico(specie_key):
+        if storico_df_full.empty or not luogo_norm:
+            return None
+        mask = ((storico_df_full["data"] == data_str_uscita) &
+                (storico_df_full["luogo"].str.lower().str.contains(luogo_norm.lower(), na=False)) &
+                (storico_df_full["specie"] == specie_key))
+        righe = storico_df_full[mask]
+        return int(righe["punteggio"].iloc[0]) if not righe.empty else None
+
+    p_porcini = punteggio_storico("porcini")
+    p_finferli = punteggio_storico("finferli")
+    p_russule = punteggio_storico("russule")
+
+    if any([p_porcini, p_finferli, p_russule]):
+        st.caption(
+            f"Punteggi app per quel giorno: "
+            f"Porcini {p_porcini if p_porcini else '—'} · "
+            f"Finferli {p_finferli if p_finferli else '—'} · "
+            f"Russule {p_russule if p_russule else '—'}"
+        )
+    else:
+        st.caption("Cerca prima il luogo nell'app per associare automaticamente i punteggi del giorno.")
+
+    if st.button("💾 Salva uscita", type="primary"):
+        if not luogo_uscita.strip():
+            st.error("Inserisci almeno il luogo.")
+        else:
+            salva_uscita({
+                "data_uscita": data_str_uscita,
+                "luogo": luogo_uscita.strip(),
+                "quota": quota_uscita if quota_uscita > 0 else "",
+                "specie_trovate": ", ".join(specie_trovate) if specie_trovate else "",
+                "quantita": quantita,
+                "punteggio_app_porcini": p_porcini or "",
+                "punteggio_app_finferli": p_finferli or "",
+                "punteggio_app_russule": p_russule or "",
+                "note": note.strip(),
+                "registrato_il": datetime.now().isoformat(timespec="seconds"),
+            })
+            st.success("Uscita salvata!")
+            st.rerun()
+
+# Tabella uscite passate
+diario_df = carica_diario()
+if not diario_df.empty:
+    st.markdown("**Uscite registrate:**")
+    df_display = diario_df.sort_values("data_uscita", ascending=False).copy()
+    for idx, row in df_display.iterrows():
+        with st.container():
+            col_a, col_b, col_c = st.columns([2, 3, 1])
+            with col_a:
+                st.markdown(f"**{row['data_uscita']}**")
+                quota_txt = f" · {int(row['quota'])}m" if pd.notna(row['quota']) and str(row['quota']).strip() not in ("", "0") else ""
+                st.caption(f"{row['luogo']}{quota_txt}")
+            with col_b:
+                specie_txt = row['specie_trovate'] if pd.notna(row['specie_trovate']) and row['specie_trovate'] else "—"
+                st.write(f"{row['quantita']} · {specie_txt}")
+                punteggi_txt = " · ".join([
+                    f"P:{row['punteggio_app_porcini']}" if pd.notna(row.get('punteggio_app_porcini')) and str(row.get('punteggio_app_porcini')).strip() else "",
+                    f"F:{row['punteggio_app_finferli']}" if pd.notna(row.get('punteggio_app_finferli')) and str(row.get('punteggio_app_finferli')).strip() else "",
+                    f"R:{row['punteggio_app_russule']}" if pd.notna(row.get('punteggio_app_russule')) and str(row.get('punteggio_app_russule')).strip() else "",
+                ])
+                punteggi_txt = " · ".join([p for p in punteggi_txt.split(" · ") if p])
+                if punteggi_txt:
+                    st.caption(f"App: {punteggi_txt}")
+                if pd.notna(row.get('note')) and str(row.get('note')).strip():
+                    st.caption(f"📝 {row['note']}")
+            with col_c:
+                if st.button("🗑️", key=f"del_uscita_{idx}", help="Elimina questa uscita"):
+                    elimina_uscita(idx)
+                    st.rerun()
+            st.divider()
+else:
+    st.caption("Nessuna uscita registrata ancora. Aggiungi la tua prima uscita qui sopra!")
