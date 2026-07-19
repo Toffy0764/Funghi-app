@@ -1420,11 +1420,34 @@ def scarica_e_calcola_punto(lat, lon, oggi_str):
         return None
 
 
-regione_scelta = st.selectbox(
-    "Seleziona regione",
-    list(REGIONI_NORD_ITALIA.keys()),
-    index=0
+regione_scelta = None
+centro_punto = None
+
+modalita_screening = st.radio(
+    "Modalità screening",
+    ["🗺️ Regione intera (griglia ~15km)", "📍 Intorno a un punto (griglia fitta)"],
+    horizontal=True,
 )
+
+if modalita_screening.startswith("🗺️"):
+    regione_scelta = st.selectbox(
+        "Seleziona regione",
+        list(REGIONI_NORD_ITALIA.keys()),
+        index=0
+    )
+else:
+    col_p1, col_p2, col_p3 = st.columns(3)
+    with col_p1:
+        centro_input = st.text_input(
+            "Luogo o coordinate centro",
+            placeholder="Es. Passo Cereda  o  46.23, 11.85",
+        )
+    with col_p2:
+        raggio_km = st.number_input(
+            "Raggio (km)", min_value=5, max_value=100, value=30, step=5
+        )
+    with col_p3:
+        passo_km = st.selectbox("Passo griglia (km)", [5, 7, 10, 15], index=1)
 
 col_s1, col_s2 = st.columns(2)
 with col_s1:
@@ -1446,18 +1469,57 @@ with col_btn1:
     )
 with col_btn2:
     if st.button("🔄 Svuota cache", use_container_width=True,
-                 help="Forza il riscari­camento dei dati meteo (utile se i risultati sembrano fermi)"):
+                 help="Forza il ricaricamento dei dati meteo (utile se i risultati sembrano fermi)"):
         st.cache_data.clear()
         st.session_state.pop("screening_risultati", None)
         st.success("Cache svuotata — riavvia lo screening.")
         st.rerun()
 
 if avvia_screening:
-    lat_min, lat_max, lon_min, lon_max = REGIONI_NORD_ITALIA[regione_scelta]
-    punti = griglia_punti(lat_min, lat_max, lon_min, lon_max)
     oggi_str_screen = datetime.now().strftime("%Y-%m-%d")
 
-    st.info(f"Analisi di {len(punti)} punti su {regione_scelta}... attendere.")
+    if modalita_screening.startswith("🗺️"):
+        # Modalità regione
+        lat_min, lat_max, lon_min, lon_max = REGIONI_NORD_ITALIA[regione_scelta]
+        punti = griglia_punti(lat_min, lat_max, lon_min, lon_max, passo_gradi=0.13)
+        etichetta_screening = regione_scelta
+        centro_lat_screen = (lat_min + lat_max) / 2
+        centro_lon_screen = (lon_min + lon_max) / 2
+        zoom_screen = 8
+    else:
+        # Modalità intorno a un punto
+        if not centro_input.strip():
+            st.error("Inserisci un luogo o coordinate per il centro.")
+            st.stop()
+
+        geo_centro = risolvi_luogo(centro_input)
+        if geo_centro is None:
+            st.error(f"Luogo non trovato: '{centro_input}'. Prova con coordinate (es. 46.23, 11.85).")
+            st.stop()
+
+        clat, clon = geo_centro["lat"], geo_centro["lon"]
+        # Converti raggio km in gradi (approssimazione: 1° lat ≈ 111km, 1° lon ≈ 111km * cos(lat))
+        delta_lat = raggio_km / 111.0
+        delta_lon = raggio_km / (111.0 * abs(__import__('math').cos(__import__('math').radians(clat))))
+        lat_min, lat_max = clat - delta_lat, clat + delta_lat
+        lon_min, lon_max = clon - delta_lon, clon + delta_lon
+        passo_gradi = passo_km / 111.0
+
+        # Genera griglia e filtra per distanza (cerchio, non rettangolo)
+        import math
+        punti_rect = griglia_punti(lat_min, lat_max, lon_min, lon_max, passo_gradi=passo_gradi)
+        punti = []
+        for plat, plon in punti_rect:
+            dist = math.sqrt(((plat - clat) * 111) ** 2 + ((plon - clon) * 111 * math.cos(math.radians(clat))) ** 2)
+            if dist <= raggio_km:
+                punti.append((plat, plon))
+
+        etichetta_screening = f"{geo_centro['nome']} (raggio {raggio_km}km, passo {passo_km}km)"
+        centro_lat_screen = clat
+        centro_lon_screen = clon
+        zoom_screen = 10 if raggio_km <= 20 else 9 if raggio_km <= 40 else 8
+
+    st.info(f"Analisi di {len(punti)} punti — {etichetta_screening}... attendere.")
     barra = st.progress(0)
     risultati = []
 
@@ -1476,15 +1538,15 @@ if avvia_screening:
 
     barra.empty()
 
-    # Salva in session_state così i risultati persistono tra i rerender
     st.session_state["screening_risultati"] = risultati
-    st.session_state["screening_regione"] = regione_scelta
+    st.session_state["screening_centro_lat"] = centro_lat_screen
+    st.session_state["screening_centro_lon"] = centro_lon_screen
+    st.session_state["screening_zoom"] = zoom_screen
+    st.session_state["screening_mappa_key"] = datetime.now().isoformat()
     st.session_state["screening_lat_min"] = lat_min
     st.session_state["screening_lat_max"] = lat_max
     st.session_state["screening_lon_min"] = lon_min
     st.session_state["screening_lon_max"] = lon_max
-    # Chiave univoca per forzare il ridisegno della mappa ad ogni nuovo screening
-    st.session_state["screening_mappa_key"] = datetime.now().isoformat()
 
 # Mostra risultati se presenti in session_state
 if "screening_risultati" in st.session_state:
@@ -1493,6 +1555,9 @@ if "screening_risultati" in st.session_state:
     lat_max = st.session_state["screening_lat_max"]
     lon_min = st.session_state["screening_lon_min"]
     lon_max = st.session_state["screening_lon_max"]
+    centro_lat_m = st.session_state.get("screening_centro_lat", (lat_min + lat_max) / 2)
+    centro_lon_m = st.session_state.get("screening_centro_lon", (lon_min + lon_max) / 2)
+    zoom_m = st.session_state.get("screening_zoom", 8)
 
     risultati_filtrati = [
         r for r in risultati
@@ -1513,11 +1578,9 @@ if "screening_risultati" in st.session_state:
         col_r.metric("🔴 Non favorevole", conteggi["Rosso"])
 
         # Mappa Folium
-        centro_lat = (lat_min + lat_max) / 2
-        centro_lon = (lon_min + lon_max) / 2
         mappa = folium.Map(
-            location=[centro_lat, centro_lon],
-            zoom_start=8,
+            location=[centro_lat_m, centro_lon_m],
+            zoom_start=zoom_m,
             tiles="OpenStreetMap"
         )
 
