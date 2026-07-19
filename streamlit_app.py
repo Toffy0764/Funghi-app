@@ -1432,9 +1432,18 @@ with col_s2:
         min_value=100, max_value=3000, value=1800, step=100
     )
 
-avvia_screening = st.button(
-    "🔍 Avvia screening", type="secondary", use_container_width=True
-)
+col_btn1, col_btn2 = st.columns([3, 1])
+with col_btn1:
+    avvia_screening = st.button(
+        "🔍 Avvia screening", type="secondary", use_container_width=True
+    )
+with col_btn2:
+    if st.button("🔄 Svuota cache", use_container_width=True,
+                 help="Forza il riscari­camento dei dati meteo (utile se i risultati sembrano fermi)"):
+        st.cache_data.clear()
+        st.session_state.pop("screening_risultati", None)
+        st.success("Cache svuotata — riavvia lo screening.")
+        st.rerun()
 
 if avvia_screening:
     lat_min, lat_max, lon_min, lon_max = REGIONI_NORD_ITALIA[regione_scelta]
@@ -1467,6 +1476,8 @@ if avvia_screening:
     st.session_state["screening_lat_max"] = lat_max
     st.session_state["screening_lon_min"] = lon_min
     st.session_state["screening_lon_max"] = lon_max
+    # Chiave univoca per forzare il ridisegno della mappa ad ogni nuovo screening
+    st.session_state["screening_mappa_key"] = datetime.now().isoformat()
 
 # Mostra risultati se presenti in session_state
 if "screening_risultati" in st.session_state:
@@ -1525,7 +1536,8 @@ if "screening_risultati" in st.session_state:
                 tooltip=f"{res['colore']} · {res['elevazione']}m",
             ).add_to(mappa)
 
-        st_folium(mappa, width=700, height=500, returned_objects=[])
+        st_folium(mappa, width=700, height=500, returned_objects=[],
+                  key=st.session_state.get("screening_mappa_key", "mappa_screening"))
 
         # Lista punti migliori (verdi, blu, gialli)
         migliori = [r for r in risultati_filtrati if r["colore"] in ("Verde", "Blu", "Giallo")]
