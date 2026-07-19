@@ -320,13 +320,20 @@ def calcola_stato_porcini(dati, tabella_temperature):
     progressivo dei giorni di riproduzione del micelio (con la regola delle
     interruzioni: una pausa di 1-3 giorni fuori range non azzera il conteggio,
     oltre 3 giorni consecutivi fuori range il conteggio riparte da zero).
+
+    Include anche il calcolo dello shock termico (Zoffoli: sbalzo di 8/15°C
+    associato a pioggia significativa come innesco della buttata).
+    Lo shock termico genera un bonus al punteggio finale (0-15 punti).
     """
     date_ordinate = sorted(dati.keys())
     righe = []
     giorni_consecutivi_in_range = 0
     giorni_consecutivi_fuori_range = 0
-    picco_raggiunto = False
-    giorni_da_uscita_range = None
+
+    FINESTRA_SHOCK = 5        # giorni su cui calcolare lo sbalzo termico
+    SHOCK_MINIMO = 8.0        # °C sotto cui nessun bonus
+    SHOCK_OTTIMALE = 15.0     # °C sopra cui bonus massimo
+    BONUS_MAX_SHOCK = 15.0    # punti bonus massimi
 
     for idx, data_str in enumerate(date_ordinate):
         p_residua = pioggia_residua_giorno(date_ordinate, dati, idx)
@@ -343,11 +350,40 @@ def calcola_stato_porcini(dati, tabella_temperature):
         else:
             giorni_consecutivi_fuori_range += 1
             if giorni_consecutivi_fuori_range > 3:
-                giorni_consecutivi_in_range = 0  # riparte da zero
-            # se <= 3 giorni fuori range, il conteggio resta "in pausa" (non incrementa ma non si azzera)
+                giorni_consecutivi_in_range = 0
 
         giorni_necessari = _giorni_riproduzione_necessari(p_residua, t_mediana, t_min, t_ott, t_max)
         fase_completata = giorni_consecutivi_in_range >= giorni_necessari
+
+        # --- Calcolo shock termico ---
+        # Sbalzo = differenza tra temp. massima e minima nei FINESTRA_SHOCK giorni precedenti.
+        # Il bonus si applica solo se c'è stata anche pioggia significativa nella stessa finestra
+        # (lo shock termico senza pioggia non innesca la buttata secondo Zoffoli).
+        idx_inizio = max(0, idx - FINESTRA_SHOCK + 1)
+        temp_medie_finestra = [
+            dati[date_ordinate[i]]["temp_media"]
+            for i in range(idx_inizio, idx + 1)
+            if dati[date_ordinate[i]]["temp_media"] is not None
+        ]
+        pioggia_finestra = sum(
+            dati[date_ordinate[i]]["pioggia_mm"]
+            for i in range(idx_inizio, idx + 1)
+        )
+        if len(temp_medie_finestra) >= 2:
+            sbalzo = max(temp_medie_finestra) - min(temp_medie_finestra)
+        else:
+            sbalzo = 0.0
+
+        pioggia_sufficiente = pioggia_finestra >= SOGLIA_GIORNO_PIOVOSO * 2  # almeno 10mm nella finestra
+
+        if sbalzo >= SHOCK_MINIMO and pioggia_sufficiente:
+            if sbalzo >= SHOCK_OTTIMALE:
+                bonus_shock = BONUS_MAX_SHOCK
+            else:
+                frazione = (sbalzo - SHOCK_MINIMO) / (SHOCK_OTTIMALE - SHOCK_MINIMO)
+                bonus_shock = round(frazione * BONUS_MAX_SHOCK, 1)
+        else:
+            bonus_shock = 0.0
 
         righe.append({
             "data": data_str,
@@ -360,6 +396,9 @@ def calcola_stato_porcini(dati, tabella_temperature):
             "giorni_in_range_consecutivi": giorni_consecutivi_in_range,
             "giorni_necessari": round(giorni_necessari, 1),
             "fase_completata": fase_completata,
+            "sbalzo_termico": round(sbalzo, 1),
+            "bonus_shock": bonus_shock,
+            "pioggia_finestra_shock": round(pioggia_finestra, 1),
         })
 
     return righe
@@ -1024,6 +1063,24 @@ if "risultato" in st.session_state:
                 f"**Giorni in range consecutivi:** {riga_oggi_edulis['giorni_in_range_consecutivi']} "
                 f"su {riga_oggi_edulis['giorni_necessari']:.0f} necessari per completare la riproduzione del micelio"
             )
+
+            # --- Shock termico ---
+            sbalzo = riga_oggi_edulis.get("sbalzo_termico", 0)
+            bonus = riga_oggi_edulis.get("bonus_shock", 0)
+            pioggia_shock = riga_oggi_edulis.get("pioggia_finestra_shock", 0)
+            if sbalzo >= 8 and pioggia_shock >= 10:
+                st.success(
+                    f"⚡ **Shock termico rilevato:** sbalzo di **{sbalzo}°C** negli ultimi 5 giorni "
+                    f"con {pioggia_shock} mm di pioggia → **bonus +{bonus} punti** al punteggio"
+                )
+            elif sbalzo >= 5:
+                st.info(
+                    f"⚡ Sbalzo termico parziale: {sbalzo}°C negli ultimi 5 giorni "
+                    f"({'pioggia sufficiente' if pioggia_shock >= 10 else f'pioggia insufficiente ({pioggia_shock} mm)'}) "
+                    f"→ nessun bonus"
+                )
+            else:
+                st.caption(f"⚡ Shock termico: sbalzo {sbalzo}°C negli ultimi 5 giorni — sotto la soglia minima (8°C)")
 
             with st.expander("Diario di campo Porcini (28 giorni)"):
                 df_porcini = pd.DataFrame([
