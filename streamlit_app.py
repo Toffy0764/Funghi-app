@@ -824,16 +824,13 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                 serie_originale = {key: calcola_punteggi_giornalieri(dati, profilo) for key, profilo in PROFILI.items()}
                 serie_porcini_edulis_orig = calcola_stato_porcini(dati, TABELLA_EDULIS_PINOPHILUS)
                 serie_porcini_aereus_orig = calcola_stato_porcini(dati, TABELLA_AEREUS_AESTIVALIS)
+                serie_galletti_orig = calcola_stato_galletti(dati)
 
-                # Modello statistico dedicato per i porcini
+                # Calcola con dati corretti per quota
+                serie = {key: calcola_punteggi_giornalieri(dati_corretti, profilo) for key, profilo in PROFILI.items()}
                 serie_porcini_edulis = calcola_stato_porcini(dati_corretti, TABELLA_EDULIS_PINOPHILUS)
                 serie_porcini_aereus = calcola_stato_porcini(dati_corretti, TABELLA_AEREUS_AESTIVALIS)
-                serie_porcini_edulis_orig = calcola_stato_porcini(dati, TABELLA_EDULIS_PINOPHILUS)
-                serie_porcini_aereus_orig = calcola_stato_porcini(dati, TABELLA_AEREUS_AESTIVALIS)
-
-                # Modello statistico dedicato per i galletti
                 serie_galletti = calcola_stato_galletti(dati_corretti)
-                serie_galletti_orig = calcola_stato_galletti(dati)
 
                 st.session_state["risultato"] = {
                     "geo": geo,
