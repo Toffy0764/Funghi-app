@@ -1366,7 +1366,9 @@ def scarica_e_calcola_punto(lat, lon, oggi_str):
         params = {
             "latitude": lat, "longitude": lon,
             "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean",
-            "timezone": "auto", "past_days": 20, "forecast_days": 1,
+            "timezone": "auto",
+            "past_days": 20,   # CRITICO: serve la storia per calcolare pioggia residua
+            "forecast_days": 1,
             "models": "icon_d2",
         }
         r = requests.get(url, params=params, timeout=15)
@@ -1374,18 +1376,23 @@ def scarica_e_calcola_punto(lat, lon, oggi_str):
         data = r.json()
         daily = data["daily"]
 
-        # Verifica dati validi
-        if not daily["time"] or daily["temperature_2m_mean"][0] is None:
+        if not daily["time"]:
             return None
 
         dati = {}
         for i, d in enumerate(daily["time"]):
+            # Salta giorni con dati mancanti
+            if daily["temperature_2m_mean"][i] is None:
+                continue
             dati[d] = {
                 "pioggia_mm": daily["precipitation_sum"][i] or 0.0,
                 "temp_max":   daily["temperature_2m_max"][i],
                 "temp_min":   daily["temperature_2m_min"][i],
                 "temp_media": daily["temperature_2m_mean"][i],
             }
+
+        if len(dati) < 10:  # troppo pochi dati storici, risultato inaffidabile
+            return None
 
         elevazione = data.get("elevation", 0)
         righe = calcola_stato_porcini(dati, TABELLA_EDULIS_PINOPHILUS)
