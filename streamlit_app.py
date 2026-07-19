@@ -1460,16 +1460,30 @@ if avvia_screening:
 
     barra.empty()
 
-    # Filtra per quota
+    # Salva in session_state così i risultati persistono tra i rerender
+    st.session_state["screening_risultati"] = risultati
+    st.session_state["screening_regione"] = regione_scelta
+    st.session_state["screening_lat_min"] = lat_min
+    st.session_state["screening_lat_max"] = lat_max
+    st.session_state["screening_lon_min"] = lon_min
+    st.session_state["screening_lon_max"] = lon_max
+
+# Mostra risultati se presenti in session_state
+if "screening_risultati" in st.session_state:
+    risultati = st.session_state["screening_risultati"]
+    lat_min = st.session_state["screening_lat_min"]
+    lat_max = st.session_state["screening_lat_max"]
+    lon_min = st.session_state["screening_lon_min"]
+    lon_max = st.session_state["screening_lon_max"]
+
     risultati_filtrati = [
         r for r in risultati
         if quota_min_screen <= r["elevazione"] <= quota_max_screen
     ]
 
     if not risultati_filtrati:
-        st.warning("Nessun punto trovato nella fascia di quota selezionata. Prova ad allargare il range.")
+        st.warning("Nessun punto nella fascia di quota selezionata. Allarga il range e riavvia.")
     else:
-        # Conta per colore
         conteggi = {"Verde": 0, "Blu": 0, "Giallo": 0, "Rosso": 0}
         for r in risultati_filtrati:
             conteggi[r["colore"]] = conteggi.get(r["colore"], 0) + 1
@@ -1480,7 +1494,7 @@ if avvia_screening:
         col_g.metric("🟡 In riproduzione", conteggi["Giallo"])
         col_r.metric("🔴 Non favorevole", conteggi["Rosso"])
 
-        # Costruisci mappa Folium
+        # Mappa Folium
         centro_lat = (lat_min + lat_max) / 2
         centro_lon = (lon_min + lon_max) / 2
         mappa = folium.Map(
@@ -1511,13 +1525,13 @@ if avvia_screening:
                 tooltip=f"{res['colore']} · {res['elevazione']}m",
             ).add_to(mappa)
 
-        st_folium(mappa, width=700, height=500)
+        st_folium(mappa, width=700, height=500, returned_objects=[])
 
-        # Lista punti verdi/blu
+        # Lista punti migliori
         migliori = [r for r in risultati_filtrati if r["colore"] in ("Verde", "Blu")]
         migliori.sort(key=lambda x: (x["colore"] == "Verde", x["pioggia_residua"]), reverse=True)
         if migliori:
-            st.markdown("**Punti con condizioni favorevoli (tocca per aprire la mappa):**")
+            st.markdown("**Punti con condizioni favorevoli:**")
             for res in migliori[:10]:
                 emoji = "🟢" if res["colore"] == "Verde" else "🔵"
                 mappa_url = (
