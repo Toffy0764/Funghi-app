@@ -1527,22 +1527,31 @@ if "screening_risultati" in st.session_state:
 
         st_folium(mappa, width=700, height=500, returned_objects=[])
 
-        # Lista punti migliori
-        migliori = [r for r in risultati_filtrati if r["colore"] in ("Verde", "Blu")]
-        migliori.sort(key=lambda x: (x["colore"] == "Verde", x["pioggia_residua"]), reverse=True)
+        # Lista punti migliori (verdi, blu, gialli)
+        migliori = [r for r in risultati_filtrati if r["colore"] in ("Verde", "Blu", "Giallo")]
+        migliori.sort(
+            key=lambda x: {"Verde": 3, "Blu": 2, "Giallo": 1}.get(x["colore"], 0),
+            reverse=True
+        )
         if migliori:
-            st.markdown("**Punti con condizioni favorevoli:**")
-            for res in migliori[:10]:
-                emoji = "🟢" if res["colore"] == "Verde" else "🔵"
+            st.markdown("**Punti con condizioni favorevoli o in riproduzione:**")
+            for res in migliori[:20]:
+                emoji = {"Verde": "🟢", "Blu": "🔵", "Giallo": "🟡"}.get(res["colore"], "⚪")
                 mappa_url = (
                     f"https://www.openstreetmap.org/?mlat={res['lat']}"
-                    f"&mlon={res['lon']}#map=13/{res['lat']}/{res['lon']}"
+                    f"&mlon={res['lon']}#map=14/{res['lat']}/{res['lon']}"
                 )
+                shock_txt = f" · ⚡ sbalzo {res['sbalzo']}°C +{res['bonus_shock']}pt" if res["bonus_shock"] > 0 else ""
                 st.markdown(
-                    f"{emoji} [{res['lat']:.3f}, {res['lon']:.3f}]({mappa_url}) · "
-                    f"{res['elevazione']}m · pioggia residua {res['pioggia_residua']}mm · "
-                    f"temp. mediana {res['temp_mediana']}°C"
+                    f"{emoji} **{res['colore']}** &nbsp;|&nbsp; "
+                    f"[📍 {res['lat']:.4f}, {res['lon']:.4f}]({mappa_url}) &nbsp;|&nbsp; "
+                    f"⛰️ {res['elevazione']} m &nbsp;|&nbsp; "
+                    f"🌧️ {res['pioggia_residua']} mm &nbsp;|&nbsp; "
+                    f"🌡️ {res['temp_mediana']}°C"
+                    f"{shock_txt}",
+                    unsafe_allow_html=True,
                 )
+
 
 # --- Storico ---
 storico_df = carica_storico()
