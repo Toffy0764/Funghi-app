@@ -2001,11 +2001,8 @@ if not diario_df.empty:
                     st.caption(f"App: {punteggi_txt}")
                 if pd.notna(row.get('note')) and str(row.get('note')).strip():
                     st.markdown(
-                        f"""<div style="background-color:rgb(240,235,224);padding:8px 12px;
-                        border-radius:6px;font-size:13px;margin-top:4px;
-                        border-left:3px solid #8B6F47">
-                        <p style="color:rgb(26,26,26);margin:0;font-weight:500">
-                        📝 {row['note']}</p></div>""",
+                        f"<div style='border-left:3px solid #8B6F47; padding:6px 12px; margin-top:4px'>"
+                        f"📝 {row['note']}</div>",
                         unsafe_allow_html=True
                     )
             with col_c:
