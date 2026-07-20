@@ -980,6 +980,13 @@ st.markdown(
     [data-baseweb="menu"] { background-color: #3A3326 !important; }
     [data-baseweb="option"] { background-color: #3A3326 !important; color: #F0E6D2 !important; }
     [data-baseweb="option"]:hover { background-color: #5C7A4F !important; }
+    [data-baseweb="select"] { background-color: #3A3326 !important; }
+    [data-baseweb="select"] * { color: #F0E6D2 !important; }
+    ul[role="listbox"] { background-color: #3A3326 !important; }
+    ul[role="listbox"] li { background-color: #3A3326 !important; color: #F0E6D2 !important; }
+    ul[role="listbox"] li:hover { background-color: #5C7A4F !important; }
+    li[role="option"] { background-color: #3A3326 !important; color: #F0E6D2 !important; }
+    li[role="option"]:hover { background-color: #5C7A4F !important; }
 
     /* Progress bar */
     .stProgress > div > div { background-color: #5C7A4F !important; }
