@@ -1,4 +1,4 @@
- """
+"""
 Indice Fungaiolo — app web Streamlit
 Stima quando/dove andare a funghi (porcini, finferli, russule)
 basandosi su dati meteo da Open-Meteo (gratis, no API key).
