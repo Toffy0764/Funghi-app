@@ -1,4 +1,4 @@
-"""
+ """
 Indice Fungaiolo — app web Streamlit
 Stima quando/dove andare a funghi (porcini, finferli, russule)
 basandosi su dati meteo da Open-Meteo (gratis, no API key).
@@ -295,7 +295,8 @@ def _giorni_riproduzione_necessari(pioggia_residua, temp_mediana, t_min, t_ott, 
 
 
 def pioggia_residua_giorno(date_ordinate, dati, idx):
-    """Pioggia residua: 100% ultimi 10gg + 50% dei 10gg precedenti (11°-20° giorno prima)."""
+    """Pioggia residua: 100% ultimi 10gg + 50% dei 10gg precedenti (11°-20° giorno prima).
+    Approssimazione semplificata di Zoffoli."""
     idx_inizio_recenti = max(0, idx - 9)
     recenti = sum(dati[date_ordinate[i]]["pioggia_mm"] for i in range(idx_inizio_recenti, idx + 1))
 
@@ -307,6 +308,27 @@ def pioggia_residua_giorno(date_ordinate, dati, idx):
         precedenti = 0.0
 
     return recenti + 0.5 * precedenti
+
+
+def pioggia_residua_progressiva(date_ordinate, dati, idx):
+    """
+    Pioggia residua con decadimento progressivo (formula precisa di Zoffoli):
+    - Ultimi 10 giorni: 100%
+    - Giorno 11: 90%, giorno 12: 80%, ... giorno 20: 10%
+    Ogni giorno oltre il decimo perde un ulteriore 10% rispetto al precedente.
+    """
+    totale = 0.0
+    for offset in range(20):  # da 0 (oggi) a 19 (20 giorni fa)
+        idx_giorno = idx - offset
+        if idx_giorno < 0:
+            break
+        pioggia = dati[date_ordinate[idx_giorno]]["pioggia_mm"]
+        if offset < 10:
+            peso = 1.0  # 100% per i primi 10 giorni
+        else:
+            peso = max(0.0, 1.0 - (offset - 9) * 0.1)  # 90%, 80%, ... 10%
+        totale += pioggia * peso
+    return round(totale, 1)
 
 
 def temperatura_mediana_settimana(date_ordinate, dati, idx):
@@ -367,6 +389,7 @@ def calcola_stato_porcini(dati, tabella_temperature):
 
     for idx, data_str in enumerate(date_ordinate):
         p_residua = pioggia_residua_giorno(date_ordinate, dati, idx)
+        p_residua_prog = pioggia_residua_progressiva(date_ordinate, dati, idx)
         t_mediana = temperatura_mediana_settimana(date_ordinate, dati, idx)
         t_min, t_ott, t_max = _interpola_tabella(tabella_temperature, p_residua)
 
@@ -421,6 +444,7 @@ def calcola_stato_porcini(dati, tabella_temperature):
         righe.append({
             "data": data_str,
             "pioggia_residua": round(p_residua, 1),
+            "pioggia_residua_progressiva": p_residua_prog,
             "temp_mediana": round(t_mediana, 1),
             "temp_suolo_superficiale": t_sup,
             "temp_suolo_profonda": t_prof,
@@ -1118,6 +1142,14 @@ if "risultato" in st.session_state:
                 st.caption(testo_aereus)
 
             st.write(f"**Pioggia residua:** {riga_oggi_edulis['pioggia_residua']} mm")
+            p_prog = riga_oggi_edulis.get("pioggia_residua_progressiva")
+            if p_prog is not None:
+                diff_p = round(p_prog - riga_oggi_edulis["pioggia_residua"], 1)
+                segno = "+" if diff_p > 0 else ""
+                st.caption(
+                    f"Formula progressiva (decadimento 10%/giorno oltre 10°): **{p_prog} mm** "
+                    f"({segno}{diff_p} mm rispetto alla formula semplificata)"
+                )
             st.write(f"**Temperatura mediana aria (Zoffoli, ultimi 7gg):** {riga_oggi_edulis['temp_mediana']}°C")
 
             # Temperatura del suolo (confronto con mediana aria)
