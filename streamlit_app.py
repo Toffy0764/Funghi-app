@@ -982,11 +982,19 @@ st.markdown(
     [data-baseweb="option"]:hover { background-color: #5C7A4F !important; }
     [data-baseweb="select"] { background-color: #3A3326 !important; }
     [data-baseweb="select"] * { color: #F0E6D2 !important; }
-    ul[role="listbox"] { background-color: #3A3326 !important; }
+    ul[role="listbox"] { background-color: #3A3326 !important; border: 1px solid #6B5D45 !important; }
     ul[role="listbox"] li { background-color: #3A3326 !important; color: #F0E6D2 !important; }
     ul[role="listbox"] li:hover { background-color: #5C7A4F !important; }
     li[role="option"] { background-color: #3A3326 !important; color: #F0E6D2 !important; }
     li[role="option"]:hover { background-color: #5C7A4F !important; }
+    /* Forza sfondo scuro su tutti i contenitori Streamlit */
+    [data-testid="stAppViewContainer"] { background-color: #2B2418 !important; }
+    [data-testid="stVerticalBlock"] { background-color: transparent !important; }
+    .css-1d391kg, .css-fg4pbf { background-color: #3A3326 !important; color: #F0E6D2 !important; }
+    /* Overlay dropdown */
+    div[role="listbox"] { background-color: #3A3326 !important; }
+    div[role="option"] { background-color: #3A3326 !important; color: #F0E6D2 !important; }
+    div[role="option"]:hover { background-color: #5C7A4F !important; color: #F0E6D2 !important; }
 
     /* Progress bar */
     .stProgress > div > div { background-color: #5C7A4F !important; }
@@ -1017,6 +1025,35 @@ st.markdown(
 )
 
 st.title("🍄 Indice Fungaiolo")
+
+# Injection JS per stilizzare i dropdown dinamicamente (si aggiornano dopo apertura)
+st.markdown("""
+<script>
+function fixDropdowns() {
+    const style = document.createElement('style');
+    style.textContent = `
+        ul[role="listbox"], div[data-baseweb="menu"], div[data-baseweb="popover"] {
+            background-color: #3A3326 !important;
+            border: 1px solid #6B5D45 !important;
+        }
+        li[role="option"], div[role="option"], [data-baseweb="option"] {
+            background-color: #3A3326 !important;
+            color: #F0E6D2 !important;
+        }
+        li[role="option"]:hover, div[role="option"]:hover {
+            background-color: #5C7A4F !important;
+        }
+    `;
+    if (!document.getElementById('dropdown-fix')) {
+        style.id = 'dropdown-fix';
+        document.head.appendChild(style);
+    }
+}
+// Applica subito e ogni volta che si apre un dropdown
+fixDropdowns();
+document.addEventListener('click', () => setTimeout(fixDropdowns, 100));
+</script>
+""", unsafe_allow_html=True)
 st.caption(
     "Incrocia pioggia e temperatura degli ultimi 20 giorni con le previsioni a 7 giorni "
     "per stimare le condizioni di porcini, finferli e russule."
@@ -1959,9 +1996,9 @@ if not diario_df.empty:
                     st.caption(f"App: {punteggi_txt}")
                 if pd.notna(row.get('note')) and str(row.get('note')).strip():
                     st.markdown(
-                        f"<div style='background:#F5F5F0; color:#1A1A1A; padding:8px 12px; "
-                        f"border-radius:6px; font-size:13px; margin-top:4px'>"
-                        f"📝 {row['note']}</div>",
+                        f"<div style='background:#F0EBE0; color:#1A1A1A !important; padding:8px 12px; "
+                        f"border-radius:6px; font-size:13px; margin-top:4px; font-weight:500'>"
+                        f"📝 <span style='color:#1A1A1A !important'>{row['note']}</span></div>",
                         unsafe_allow_html=True
                     )
             with col_c:
