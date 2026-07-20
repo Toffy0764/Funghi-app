@@ -902,34 +902,101 @@ def elimina_uscita(idx):
 st.markdown(
     """
     <style>
+    /* Sfondo generale */
     .stApp { background-color: #2B2418; }
-    h1, h2, h3 { font-family: Georgia, serif; color: #F0E6D2 !important; }
-    p, span, div, label { color: #F0E6D2; }
-    .stTextInput input { background-color: #241F16; color: #F0E6D2; border: 1px solid #4A4232; }
-    /* Textarea (note libere) */
-    .stTextArea textarea {
-        background-color: #241F16 !important;
+
+    /* Tutto il testo bianco/chiaro */
+    h1, h2, h3, h4, h5, h6 { font-family: Georgia, serif; color: #F0E6D2 !important; }
+    p, span, div, label, li, a { color: #F0E6D2 !important; }
+    .stMarkdown, .stText, .stCaption { color: #F0E6D2 !important; }
+    [data-testid="stMetricLabel"] { color: #B5AD98 !important; }
+    [data-testid="stMetricValue"] { color: #F0E6D2 !important; }
+    [data-testid="stMetricDelta"] { color: #8BC34A !important; }
+
+    /* Campi di testo */
+    .stTextInput input, .stNumberInput input {
+        background-color: #3A3326 !important;
         color: #F0E6D2 !important;
-        border: 1px solid #4A4232 !important;
+        border: 1px solid #6B5D45 !important;
     }
-    .stTextArea textarea::placeholder { color: #6B6354 !important; }
-    /* Multiselect (specie trovate) */
-    .stMultiSelect > div > div {
-        background-color: #241F16 !important;
+    .stTextInput input::placeholder,
+    .stNumberInput input::placeholder { color: #8A7A60 !important; }
+
+    /* Textarea */
+    .stTextArea textarea {
+        background-color: #3A3326 !important;
         color: #F0E6D2 !important;
-        border: 1px solid #4A4232 !important;
+        border: 1px solid #6B5D45 !important;
+    }
+    .stTextArea textarea::placeholder { color: #8A7A60 !important; }
+
+    /* Selectbox */
+    .stSelectbox > div > div,
+    .stSelectbox > div > div > div {
+        background-color: #3A3326 !important;
+        color: #F0E6D2 !important;
+        border: 1px solid #6B5D45 !important;
+    }
+    .stSelectbox svg { fill: #F0E6D2 !important; }
+
+    /* Multiselect */
+    .stMultiSelect > div > div {
+        background-color: #3A3326 !important;
+        color: #F0E6D2 !important;
+        border: 1px solid #6B5D45 !important;
     }
     .stMultiSelect span { color: #F0E6D2 !important; }
     .stMultiSelect [data-baseweb="tag"] {
         background-color: #5C7A4F !important;
         color: #F0E6D2 !important;
     }
-    /* Selectbox (quantità trovata) */
-    .stSelectbox > div > div {
-        background-color: #241F16 !important;
+    .stMultiSelect input { color: #F0E6D2 !important; }
+
+    /* Radio buttons */
+    .stRadio label { color: #F0E6D2 !important; }
+    .stRadio div { color: #F0E6D2 !important; }
+
+    /* Date input */
+    .stDateInput input {
+        background-color: #3A3326 !important;
         color: #F0E6D2 !important;
+        border: 1px solid #6B5D45 !important;
+    }
+
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: #3A3326 !important;
+        color: #F0E6D2 !important;
+        border: 1px solid #6B5D45 !important;
+        border-radius: 8px !important;
+    }
+    .streamlit-expanderContent {
+        background-color: #2B2418 !important;
         border: 1px solid #4A4232 !important;
     }
+
+    /* Dropdown menu opzioni */
+    [data-baseweb="popover"] { background-color: #3A3326 !important; }
+    [data-baseweb="menu"] { background-color: #3A3326 !important; }
+    [data-baseweb="option"] { background-color: #3A3326 !important; color: #F0E6D2 !important; }
+    [data-baseweb="option"]:hover { background-color: #5C7A4F !important; }
+
+    /* Progress bar */
+    .stProgress > div > div { background-color: #5C7A4F !important; }
+
+    /* Bottoni */
+    .stButton > button {
+        border: 1px solid #6B5D45 !important;
+        color: #F0E6D2 !important;
+    }
+
+    /* Info/Warning/Success/Error box */
+    .stInfo { background-color: #1A2A3A !important; color: #F0E6D2 !important; }
+    .stWarning { background-color: #3A2A10 !important; color: #F0E6D2 !important; }
+    .stSuccess { background-color: #1A3A1A !important; color: #F0E6D2 !important; }
+    .stError { background-color: #3A1A1A !important; color: #F0E6D2 !important; }
+
+    /* Specie card */
     .specie-card {
         background: #241F16;
         border-radius: 14px;
