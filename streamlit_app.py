@@ -607,10 +607,14 @@ def scarica_dati_meteo(lat: float, lon: float):
     base_params = {
         "latitude": lat,
         "longitude": lon,
-        "daily": (
-            "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean,"
-            "soil_temperature_0_to_7cm,soil_temperature_7_to_28cm"
-        ),
+        "daily": [
+            "precipitation_sum",
+            "temperature_2m_max",
+            "temperature_2m_min",
+            "temperature_2m_mean",
+            "soil_temperature_0_to_7cm",
+            "soil_temperature_7_to_28cm",
+        ],
         "timezone": "auto",
         "past_days": 20,
         "forecast_days": 7,
