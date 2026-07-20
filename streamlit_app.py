@@ -312,8 +312,35 @@ def pioggia_residua_giorno(date_ordinate, dati, idx):
 def temperatura_mediana_settimana(date_ordinate, dati, idx):
     """Media delle temperature medie giornaliere dell'aria nell'ultima settimana (7gg)."""
     idx_inizio = max(0, idx - 6)
-    valori = [dati[date_ordinate[i]]["temp_media"] for i in range(idx_inizio, idx + 1)]
-    return sum(valori) / len(valori)
+    valori = [dati[date_ordinate[i]]["temp_media"] for i in range(idx_inizio, idx + 1)
+              if dati[date_ordinate[i]]["temp_media"] is not None]
+    return sum(valori) / len(valori) if valori else 0
+
+
+def temperatura_suolo_media_settimana(date_ordinate, dati, idx):
+    """
+    Media delle temperature del suolo (media tra 0-7cm e 7-28cm) degli ultimi 7 giorni.
+    Restituisce (temp_superficiale, temp_profonda, temp_media_suolo) oppure None se
+    i dati non sono disponibili.
+    """
+    idx_inizio = max(0, idx - 6)
+    sup_valori = []
+    prof_valori = []
+    for i in range(idx_inizio, idx + 1):
+        s = dati[date_ordinate[i]].get("temp_suolo_superficiale")
+        p = dati[date_ordinate[i]].get("temp_suolo_profonda")
+        if s is not None:
+            sup_valori.append(s)
+        if p is not None:
+            prof_valori.append(p)
+    if not sup_valori and not prof_valori:
+        return None, None, None
+    t_sup = round(sum(sup_valori) / len(sup_valori), 1) if sup_valori else None
+    t_prof = round(sum(prof_valori) / len(prof_valori), 1) if prof_valori else None
+    # Media tra i due strati come stima della temperatura del suolo rilevante per il micelio
+    valori_medi = [v for v in [t_sup, t_prof] if v is not None]
+    t_media = round(sum(valori_medi) / len(valori_medi), 1) if valori_medi else None
+    return t_sup, t_prof, t_media
 
 
 def calcola_stato_porcini(dati, tabella_temperature):
@@ -388,10 +415,16 @@ def calcola_stato_porcini(dati, tabella_temperature):
         else:
             bonus_shock = 0.0
 
+        # Temperatura del suolo (media ultimi 7gg, se disponibile)
+        t_sup, t_prof, t_suolo = temperatura_suolo_media_settimana(date_ordinate, dati, idx)
+
         righe.append({
             "data": data_str,
             "pioggia_residua": round(p_residua, 1),
             "temp_mediana": round(t_mediana, 1),
+            "temp_suolo_superficiale": t_sup,
+            "temp_suolo_profonda": t_prof,
+            "temp_suolo_media": t_suolo,
             "temp_range_min": round(t_min, 1),
             "temp_range_ott": round(t_ott, 1),
             "temp_range_max": round(t_max, 1),
@@ -568,13 +601,16 @@ def scarica_dati_meteo(lat: float, lon: float):
     ma copertura limitata a Centro Europa e forecast breve). Se non disponibile o
     incompleto per questo punto, ricade sul best-match generico di Open-Meteo.
     Restituisce (dati, nome_modello_usato, elevazione_metri).
-    L'elevazione è la quota della cella di griglia usata dal modello (non la quota
-    esatta richiesta): utile per capire quanto il dato è rappresentativo della zona.
+    Include anche temperatura del suolo (0-7cm e 7-28cm) per confronto con la
+    temperatura mediana dell'aria calcolata secondo Zoffoli.
     """
     base_params = {
         "latitude": lat,
         "longitude": lon,
-        "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean",
+        "daily": (
+            "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean,"
+            "soil_temperature_0_to_7cm,soil_temperature_7_to_28cm"
+        ),
         "timezone": "auto",
         "past_days": 20,
         "forecast_days": 7,
@@ -590,6 +626,8 @@ def scarica_dati_meteo(lat: float, lon: float):
                 "temp_max": daily["temperature_2m_max"][i],
                 "temp_min": daily["temperature_2m_min"][i],
                 "temp_media": daily["temperature_2m_mean"][i],
+                "temp_suolo_superficiale": daily.get("soil_temperature_0_to_7cm", [None] * (i+1))[i],
+                "temp_suolo_profonda": daily.get("soil_temperature_7_to_28cm", [None] * (i+1))[i],
             }
         return risultato
 
@@ -1057,7 +1095,23 @@ if "risultato" in st.session_state:
                 st.caption(testo_aereus)
 
             st.write(f"**Pioggia residua:** {riga_oggi_edulis['pioggia_residua']} mm")
-            st.write(f"**Temperatura mediana (ultima settimana):** {riga_oggi_edulis['temp_mediana']}°C")
+            st.write(f"**Temperatura mediana aria (Zoffoli, ultimi 7gg):** {riga_oggi_edulis['temp_mediana']}°C")
+
+            # Temperatura del suolo (confronto con mediana aria)
+            t_sup = riga_oggi_edulis.get("temp_suolo_superficiale")
+            t_prof = riga_oggi_edulis.get("temp_suolo_profonda")
+            t_suolo = riga_oggi_edulis.get("temp_suolo_media")
+            if t_suolo is not None:
+                diff = round(t_suolo - riga_oggi_edulis["temp_mediana"], 1)
+                segno = "+" if diff > 0 else ""
+                st.write(
+                    f"**Temperatura del suolo (Open-Meteo):** "
+                    f"{t_sup}°C (0-7cm) · {t_prof}°C (7-28cm) · "
+                    f"media {t_suolo}°C "
+                    f"({'più calda' if diff > 0 else 'più fredda'} di {abs(diff)}°C rispetto alla mediana aria)"
+                )
+            else:
+                st.caption("Temperatura del suolo: non disponibile per questo punto")
             st.write(
                 f"**Range attuale Edulis/Pinophilus:** {riga_oggi_edulis['temp_range_min']}–"
                 f"{riga_oggi_edulis['temp_range_max']}°C (ottimale {riga_oggi_edulis['temp_range_ott']}°C)"
