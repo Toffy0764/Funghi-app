@@ -906,6 +906,30 @@ st.markdown(
     h1, h2, h3 { font-family: Georgia, serif; color: #F0E6D2 !important; }
     p, span, div, label { color: #F0E6D2; }
     .stTextInput input { background-color: #241F16; color: #F0E6D2; border: 1px solid #4A4232; }
+    /* Textarea (note libere) */
+    .stTextArea textarea {
+        background-color: #241F16 !important;
+        color: #F0E6D2 !important;
+        border: 1px solid #4A4232 !important;
+    }
+    .stTextArea textarea::placeholder { color: #6B6354 !important; }
+    /* Multiselect (specie trovate) */
+    .stMultiSelect > div > div {
+        background-color: #241F16 !important;
+        color: #F0E6D2 !important;
+        border: 1px solid #4A4232 !important;
+    }
+    .stMultiSelect span { color: #F0E6D2 !important; }
+    .stMultiSelect [data-baseweb="tag"] {
+        background-color: #5C7A4F !important;
+        color: #F0E6D2 !important;
+    }
+    /* Selectbox (quantità trovata) */
+    .stSelectbox > div > div {
+        background-color: #241F16 !important;
+        color: #F0E6D2 !important;
+        border: 1px solid #4A4232 !important;
+    }
     .specie-card {
         background: #241F16;
         border-radius: 14px;
@@ -1860,7 +1884,12 @@ if not diario_df.empty:
                 if punteggi_txt:
                     st.caption(f"App: {punteggi_txt}")
                 if pd.notna(row.get('note')) and str(row.get('note')).strip():
-                    st.caption(f"📝 {row['note']}")
+                    st.markdown(
+                        f"<div style='background:#F5F5F0; color:#1A1A1A; padding:8px 12px; "
+                        f"border-radius:6px; font-size:13px; margin-top:4px'>"
+                        f"📝 {row['note']}</div>",
+                        unsafe_allow_html=True
+                    )
             with col_c:
                 if st.button("🗑️", key=f"del_uscita_{idx}", help="Elimina questa uscita"):
                     elimina_uscita(idx)
