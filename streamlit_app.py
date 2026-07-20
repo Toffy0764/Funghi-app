@@ -1011,6 +1011,11 @@ st.markdown(
     .stSuccess { background-color: #1A3A1A !important; color: #F0E6D2 !important; }
     .stError { background-color: #3A1A1A !important; color: #F0E6D2 !important; }
 
+    /* Note diario uscite - testo forzato nero */
+    div.nota-uscita, div.nota-uscita p, div.nota-uscita * {
+        color: rgb(26,26,26) !important;
+    }
+
     /* Specie card */
     .specie-card {
         background: #241F16;
@@ -1996,9 +2001,11 @@ if not diario_df.empty:
                     st.caption(f"App: {punteggi_txt}")
                 if pd.notna(row.get('note')) and str(row.get('note')).strip():
                     st.markdown(
-                        f"<div style='background:#F0EBE0; color:#1A1A1A !important; padding:8px 12px; "
-                        f"border-radius:6px; font-size:13px; margin-top:4px; font-weight:500'>"
-                        f"📝 <span style='color:#1A1A1A !important'>{row['note']}</span></div>",
+                        f"""<div style="background-color:rgb(240,235,224);padding:8px 12px;
+                        border-radius:6px;font-size:13px;margin-top:4px;
+                        border-left:3px solid #8B6F47">
+                        <p style="color:rgb(26,26,26);margin:0;font-weight:500">
+                        📝 {row['note']}</p></div>""",
                         unsafe_allow_html=True
                     )
             with col_c:
