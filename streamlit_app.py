@@ -612,6 +612,8 @@ def scarica_dati_meteo(lat: float, lon: float):
             "temperature_2m_max",
             "temperature_2m_min",
             "temperature_2m_mean",
+        ],
+        "hourly": [
             "soil_temperature_0_to_7cm",
             "soil_temperature_7_to_28cm",
         ],
@@ -623,15 +625,32 @@ def scarica_dati_meteo(lat: float, lon: float):
 
     def estrai(data):
         daily = data["daily"]
+        hourly = data.get("hourly", {})
+
+        # Calcola media giornaliera temperatura suolo dai dati orari (24 valori per giorno)
+        suolo_sup_giorno = {}
+        suolo_prof_giorno = {}
+        if hourly.get("time"):
+            for i, ora_str in enumerate(hourly["time"]):
+                giorno = ora_str[:10]  # prende solo "YYYY-MM-DD"
+                s = hourly.get("soil_temperature_0_to_7cm", [])[i] if i < len(hourly.get("soil_temperature_0_to_7cm", [])) else None
+                p = hourly.get("soil_temperature_7_to_28cm", [])[i] if i < len(hourly.get("soil_temperature_7_to_28cm", [])) else None
+                if s is not None:
+                    suolo_sup_giorno.setdefault(giorno, []).append(s)
+                if p is not None:
+                    suolo_prof_giorno.setdefault(giorno, []).append(p)
+
         risultato = {}
         for i, data_str in enumerate(daily["time"]):
+            sup_valori = suolo_sup_giorno.get(data_str, [])
+            prof_valori = suolo_prof_giorno.get(data_str, [])
             risultato[data_str] = {
                 "pioggia_mm": daily["precipitation_sum"][i] or 0.0,
                 "temp_max": daily["temperature_2m_max"][i],
                 "temp_min": daily["temperature_2m_min"][i],
                 "temp_media": daily["temperature_2m_mean"][i],
-                "temp_suolo_superficiale": daily.get("soil_temperature_0_to_7cm", [None] * (i+1))[i],
-                "temp_suolo_profonda": daily.get("soil_temperature_7_to_28cm", [None] * (i+1))[i],
+                "temp_suolo_superficiale": round(sum(sup_valori) / len(sup_valori), 1) if sup_valori else None,
+                "temp_suolo_profonda": round(sum(prof_valori) / len(prof_valori), 1) if prof_valori else None,
             }
         return risultato
 
