@@ -2083,4 +2083,3 @@ if not diario_df.empty:
             st.divider()
 else:
     st.caption("Nessuna uscita registrata ancora. Aggiungi la tua prima uscita qui sopra!")
-    
