@@ -365,7 +365,50 @@ def temperatura_suolo_media_settimana(date_ordinate, dati, idx):
     return t_sup, t_prof, t_media
 
 
-def calcola_stato_porcini(dati, tabella_temperature):
+def umidita_e_vento_settimana(date_ordinate, dati, idx):
+    """
+    Calcola umidità media relativa e vento massimo degli ultimi 7 giorni.
+    Restituisce (umidita_media_%, vento_max_kmh, commento_umidita, commento_vento).
+    """
+    idx_inizio = max(0, idx - 6)
+    um_valori = []
+    vento_valori = []
+    for i in range(idx_inizio, idx + 1):
+        u = dati[date_ordinate[i]].get("umidita_media")
+        v = dati[date_ordinate[i]].get("vento_max")
+        if u is not None:
+            um_valori.append(u)
+        if v is not None:
+            vento_valori.append(v)
+
+    umidita = round(sum(um_valori) / len(um_valori), 1) if um_valori else None
+    vento = round(max(vento_valori), 1) if vento_valori else None
+
+    # Commento umidità
+    if umidita is None:
+        commento_u = "n/d"
+    elif umidita >= 80:
+        commento_u = "🟢 Ottima (≥80%)"
+    elif umidita >= 65:
+        commento_u = "🟡 Buona (65-80%)"
+    elif umidita >= 50:
+        commento_u = "🟠 Discreta (50-65%)"
+    else:
+        commento_u = "🔴 Bassa (<50%) — suolo tende ad asciugarsi"
+
+    # Commento vento
+    if vento is None:
+        commento_v = "n/d"
+    elif vento <= 20:
+        commento_v = "🟢 Calmo (≤20 km/h)"
+    elif vento <= 40:
+        commento_v = "🟡 Moderato (20-40 km/h)"
+    elif vento <= 60:
+        commento_v = "🟠 Forte (40-60 km/h) — asciuga il suolo"
+    else:
+        commento_v = "🔴 Molto forte (>60 km/h) — penalizzante"
+
+    return umidita, vento, commento_u, commento_v
     """
     Calcola, per ogni giorno, pioggia residua, temperatura mediana, range
     corrente (min/ottimale/max), se il giorno è "in range", e il conteggio
@@ -636,10 +679,12 @@ def scarica_dati_meteo(lat: float, lon: float):
             "temperature_2m_max",
             "temperature_2m_min",
             "temperature_2m_mean",
+            "windspeed_10m_max",
         ],
         "hourly": [
             "soil_temperature_0_to_7cm",
             "soil_temperature_7_to_28cm",
+            "relativehumidity_2m",
         ],
         "timezone": "auto",
         "past_days": 20,
@@ -651,30 +696,37 @@ def scarica_dati_meteo(lat: float, lon: float):
         daily = data["daily"]
         hourly = data.get("hourly", {})
 
-        # Calcola media giornaliera temperatura suolo dai dati orari (24 valori per giorno)
+        # Calcola medie giornaliere dai dati orari
         suolo_sup_giorno = {}
         suolo_prof_giorno = {}
+        umidita_giorno = {}
         if hourly.get("time"):
             for i, ora_str in enumerate(hourly["time"]):
-                giorno = ora_str[:10]  # prende solo "YYYY-MM-DD"
+                giorno = ora_str[:10]
                 s = hourly.get("soil_temperature_0_to_7cm", [])[i] if i < len(hourly.get("soil_temperature_0_to_7cm", [])) else None
                 p = hourly.get("soil_temperature_7_to_28cm", [])[i] if i < len(hourly.get("soil_temperature_7_to_28cm", [])) else None
+                u = hourly.get("relativehumidity_2m", [])[i] if i < len(hourly.get("relativehumidity_2m", [])) else None
                 if s is not None:
                     suolo_sup_giorno.setdefault(giorno, []).append(s)
                 if p is not None:
                     suolo_prof_giorno.setdefault(giorno, []).append(p)
+                if u is not None:
+                    umidita_giorno.setdefault(giorno, []).append(u)
 
         risultato = {}
         for i, data_str in enumerate(daily["time"]):
             sup_valori = suolo_sup_giorno.get(data_str, [])
             prof_valori = suolo_prof_giorno.get(data_str, [])
+            um_valori = umidita_giorno.get(data_str, [])
             risultato[data_str] = {
                 "pioggia_mm": daily["precipitation_sum"][i] or 0.0,
                 "temp_max": daily["temperature_2m_max"][i],
                 "temp_min": daily["temperature_2m_min"][i],
                 "temp_media": daily["temperature_2m_mean"][i],
+                "vento_max": daily.get("windspeed_10m_max", [None] * (i+1))[i],
                 "temp_suolo_superficiale": round(sum(sup_valori) / len(sup_valori), 1) if sup_valori else None,
                 "temp_suolo_profonda": round(sum(prof_valori) / len(prof_valori), 1) if prof_valori else None,
+                "umidita_media": round(sum(um_valori) / len(um_valori), 1) if um_valori else None,
             }
         return risultato
 
@@ -1352,6 +1404,25 @@ if "risultato" in st.session_state:
                 "🔵 Buttata in esaurimento"
             )
             st.markdown("</div>", unsafe_allow_html=True)
+
+    # --- Blocco microclima (umidità e vento) — valido per tutte le specie ---
+    if "serie_porcini_edulis" in r and r["serie_porcini_edulis"]:
+        dati_grezzi = r.get("_dati_grezzi", {})
+        if dati_grezzi:
+            date_ord = sorted(dati_grezzi.keys())
+            idx_oggi = next((i for i, d in enumerate(date_ord) if d == oggi_str), len(date_ord) - 1)
+            umidita, vento, commento_u, commento_v = umidita_e_vento_settimana(date_ord, dati_grezzi, idx_oggi)
+
+            st.markdown("---")
+            st.markdown("**🌤️ Condizioni microclima (ultimi 7 giorni)**")
+            col_u, col_v = st.columns(2)
+            with col_u:
+                st.metric("💧 Umidità relativa media", f"{umidita}%" if umidita else "n/d")
+                st.caption(commento_u)
+            with col_v:
+                st.metric("💨 Vento massimo", f"{vento} km/h" if vento else "n/d")
+                st.caption(commento_v)
+            st.markdown("---")
 
     # --- Card Finferli: modello statistico dedicato ---
     serie_finferli = r.get("serie_finferli", [])
