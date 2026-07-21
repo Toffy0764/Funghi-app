@@ -1963,7 +1963,16 @@ if "screening_risultati" in st.session_state:
 storico_df = carica_storico()
 if not storico_df.empty:
     st.markdown("---")
-    st.subheader("Luoghi cercati di recente")
+    col_titolo, col_cancella_tutto = st.columns([3, 1])
+    with col_titolo:
+        st.subheader("Luoghi cercati di recente")
+    with col_cancella_tutto:
+        if st.button("🗑️ Cancella tutto", key="cancella_storico_tutto", help="Rimuove tutti i luoghi dallo storico"):
+            if os.path.isfile(STORICO_PATH):
+                os.remove(STORICO_PATH)
+            st.success("Storico cancellato.")
+            st.rerun()
+
     luoghi_recenti = (
         storico_df.sort_values("registrato_il", ascending=False)
         .drop_duplicates(subset=["luogo"])
@@ -1976,13 +1985,18 @@ if not storico_df.empty:
             f"{ETICHETTE_SPECIE.get(r['specie'], r['specie'])}: {int(r['punteggio'])}"
             for _, r in punteggi_luogo.iterrows()
         )
-        col_a, col_b = st.columns([3, 1])
+        col_a, col_b, col_c = st.columns([3, 1, 1])
         with col_a:
             st.write(f"**{row['luogo']}**{', ' + row['regione'] if pd.notna(row['regione']) and row['regione'] else ''}")
             st.caption(riassunto)
         with col_b:
             if st.button("Ripeti", key=f"ripeti_{row['luogo']}"):
                 st.session_state["_ripeti_luogo"] = row["luogo"]
+                st.rerun()
+        with col_c:
+            if st.button("🗑️", key=f"cancella_{row['luogo']}", help=f"Rimuovi {row['luogo']} dallo storico"):
+                storico_df = storico_df[storico_df["luogo"] != row["luogo"]]
+                storico_df.to_csv(STORICO_PATH, index=False)
                 st.rerun()
 
 # --- Diario Uscite ---
