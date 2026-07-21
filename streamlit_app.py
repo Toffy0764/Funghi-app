@@ -409,6 +409,9 @@ def umidita_e_vento_settimana(date_ordinate, dati, idx):
         commento_v = "🔴 Molto forte (>60 km/h) — penalizzante"
 
     return umidita, vento, commento_u, commento_v
+
+
+def calcola_stato_porcini(dati, tabella_temperature):
     """
     Calcola, per ogni giorno, pioggia residua, temperatura mediana, range
     corrente (min/ottimale/max), se il giorno è "in range", e il conteggio
