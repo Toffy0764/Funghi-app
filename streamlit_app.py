@@ -1513,6 +1513,173 @@ if "risultato" in st.session_state:
 
             st.markdown("</div>", unsafe_allow_html=True)
 
+# --- Previsione prossimi 7 giorni ---
+if "risultato" in st.session_state:
+    r = st.session_state["risultato"]
+    oggi_str = r["oggi_str"]
+    st.markdown("---")
+    st.subheader("📅 Previsione prossimi 7 giorni")
+
+    # Porcini Edulis
+    serie_e = r.get("serie_porcini_edulis", [])
+    futuri_e = [x for x in serie_e if x["data"] >= oggi_str]
+    if futuri_e:
+        st.markdown("**🟤 Porcini Edulis/Pinophilus**")
+        COLORI_STATO = {"Verde": "#4CAF50", "Blu": "#2196F3", "Giallo": "#FFC107", "Rosso": "#F44336"}
+        for g in futuri_e[:7]:
+            colore, emoji, testo = stato_colore_porcini(g)
+            data_label = pd.to_datetime(g["data"]).strftime("%a %-d/%m")
+            barra_w = {"Verde": 100, "Blu": 75, "Giallo": 50, "Rosso": 20}.get(colore, 20)
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:10px;margin:3px 0'>"
+                f"<span style='width:70px;font-size:12px'><b>{data_label}</b></span>"
+                f"<div style='height:22px;width:{barra_w}%;background:{COLORI_STATO[colore]};border-radius:4px'></div>"
+                f"<span style='font-size:12px'>{emoji} {testo} · {g['pioggia_residua']}mm · {g['temp_mediana']}°C</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # Finferli
+    serie_f = r.get("serie_finferli", [])
+    futuri_f = [x for x in serie_f if x["data"] >= oggi_str]
+    if futuri_f:
+        st.markdown("**🟡 Finferli**")
+        for g in futuri_f[:7]:
+            colore, emoji, testo = stato_colore_porcini(g)
+            data_label = pd.to_datetime(g["data"]).strftime("%a %-d/%m")
+            barra_w = {"Verde": 100, "Blu": 75, "Giallo": 50, "Rosso": 20}.get(colore, 20)
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:10px;margin:3px 0'>"
+                f"<span style='width:70px;font-size:12px'><b>{data_label}</b></span>"
+                f"<div style='height:22px;width:{barra_w}%;background:{COLORI_STATO[colore]};border-radius:4px'></div>"
+                f"<span style='font-size:12px'>{emoji} {testo} · {g['pioggia_residua']}mm · {g['temp_mediana']}°C</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # Russule
+    serie_r = r.get("serie", {}).get("russule", [])
+    futuri_r = [x for x in serie_r if x["data"] >= oggi_str]
+    if futuri_r:
+        st.markdown("**🔴 Russule**")
+        COLORI_PUNTEGGIO = {"Ottimo": "#4CAF50", "Buono": "#8BC34A", "Possibile": "#FFC107", "Scarso": "#F44336"}
+        for g in futuri_r[:7]:
+            et, _ = etichetta(g["punteggio"])
+            data_label = pd.to_datetime(g["data"]).strftime("%a %-d/%m")
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:10px;margin:3px 0'>"
+                f"<span style='width:70px;font-size:12px'><b>{data_label}</b></span>"
+                f"<div style='height:22px;width:{max(5, g['punteggio'])}%;background:{COLORI_PUNTEGGIO.get(et, '#888')};border-radius:4px'></div>"
+                f"<span style='font-size:12px'>{et} ({int(g['punteggio'])}/100) · {g['pioggia_cumulata']}mm · {g['temp_media']}°C</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+# --- Confronto tra luoghi ---
+st.markdown("---")
+st.subheader("🔀 Confronto tra luoghi")
+st.caption("Inserisci più luoghi separati da virgola — l'app li confronta tutti insieme.")
+
+luoghi_confronto_input = st.text_input(
+    "Luoghi da confrontare",
+    placeholder="Es. Asiago, Posina, Recoaro, Passo Cereda",
+    key="luoghi_confronto"
+)
+confronta_btn = st.button("🔍 Confronta", type="secondary", use_container_width=True, key="btn_confronta")
+
+if confronta_btn and luoghi_confronto_input.strip():
+    lista_luoghi = [l.strip() for l in luoghi_confronto_input.split(",") if l.strip()]
+    if len(lista_luoghi) < 2:
+        st.warning("Inserisci almeno 2 luoghi separati da virgola.")
+    elif len(lista_luoghi) > 6:
+        st.warning("Massimo 6 luoghi alla volta per non rallentare troppo.")
+    else:
+        oggi_conf = datetime.now().strftime("%Y-%m-%d")
+        with st.spinner(f"Cerco {len(lista_luoghi)} luoghi..."):
+
+            def scarica_luogo_confronto(luogo_txt):
+                try:
+                    geo = risolvi_luogo(luogo_txt)
+                    if geo is None:
+                        return luogo_txt, None, None
+                    dati_l, _, _ = scarica_dati_meteo(geo["lat"], geo["lon"])
+                    date_ord = sorted(dati_l.keys())
+                    oggi_l = oggi_conf if oggi_conf in dati_l else [d for d in date_ord if d <= oggi_conf][-1]
+
+                    s_edulis = calcola_stato_porcini(dati_l, TABELLA_EDULIS_PINOPHILUS)
+                    s_finferli = calcola_stato_finferli(dati_l)
+                    serie_gen = {k: calcola_punteggi_giornalieri(dati_l, p) for k, p in PROFILI.items()}
+
+                    r_edulis = next((x for x in s_edulis if x["data"] == oggi_l), s_edulis[-1])
+                    r_finferli = next((x for x in s_finferli if x["data"] == oggi_l), s_finferli[-1])
+                    r_russule = next((x for x in serie_gen.get("russule", []) if x["data"] == oggi_l), None)
+
+                    col_e, emoji_e, _ = stato_colore_porcini(r_edulis)
+                    col_f, emoji_f, _ = stato_colore_porcini(r_finferli)
+                    et_r, emoji_r = (etichetta(r_russule["punteggio"]) if r_russule else ("—", ""))
+
+                    return geo["nome"], {
+                        "porcini_edulis": (col_e, emoji_e),
+                        "finferli": (col_f, emoji_f),
+                        "russule": (et_r, emoji_r),
+                        "pioggia_residua": r_edulis["pioggia_residua"],
+                        "temp_mediana": r_edulis["temp_mediana"],
+                        "elevazione": geo.get("elevazione_luogo", "—"),
+                    }, geo
+                except Exception:
+                    return luogo_txt, None, None
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+                futures = [executor.submit(scarica_luogo_confronto, l) for l in lista_luoghi]
+                risultati_conf = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+        # Tabella comparativa
+        COLORI_CONF = {"Verde": "🟢", "Blu": "🔵", "Giallo": "🟡", "Rosso": "🔴",
+                       "Ottimo": "🟢", "Buono": "🟡", "Possibile": "🟠", "Scarso": "🔴", "—": "⚪"}
+
+        righe_ok = [(nome, dati_l, geo) for nome, dati_l, geo in risultati_conf if dati_l]
+        if not righe_ok:
+            st.error("Nessun luogo trovato. Controlla i nomi e riprova.")
+        else:
+            # Intestazione
+            cols = st.columns([2] + [1] * len(righe_ok))
+            cols[0].markdown("**Specie**")
+            for i, (nome, _, _) in enumerate(righe_ok):
+                cols[i+1].markdown(f"**{nome}**")
+
+            # Riga porcini Edulis
+            cols = st.columns([2] + [1] * len(righe_ok))
+            cols[0].write("🟤 Porcini E.")
+            for i, (_, dati_l, _) in enumerate(righe_ok):
+                col, emoji = dati_l["porcini_edulis"]
+                cols[i+1].write(f"{emoji} {col}")
+
+            # Riga finferli
+            cols = st.columns([2] + [1] * len(righe_ok))
+            cols[0].write("🟡 Finferli")
+            for i, (_, dati_l, _) in enumerate(righe_ok):
+                col, emoji = dati_l["finferli"]
+                cols[i+1].write(f"{emoji} {col}")
+
+            # Riga russule
+            cols = st.columns([2] + [1] * len(righe_ok))
+            cols[0].write("🔴 Russule")
+            for i, (_, dati_l, _) in enumerate(righe_ok):
+                et, emoji = dati_l["russule"]
+                cols[i+1].write(f"{emoji} {et}")
+
+            # Riga pioggia residua
+            cols = st.columns([2] + [1] * len(righe_ok))
+            cols[0].write("🌧️ Pioggia res.")
+            for i, (_, dati_l, _) in enumerate(righe_ok):
+                cols[i+1].write(f"{dati_l['pioggia_residua']} mm")
+
+            # Riga temperatura
+            cols = st.columns([2] + [1] * len(righe_ok))
+            cols[0].write("🌡️ Temp. med.")
+            for i, (_, dati_l, _) in enumerate(righe_ok):
+                cols[i+1].write(f"{dati_l['temp_mediana']}°C")
+
 # --- Fascia altimetrica ottimale ---
 if "risultato" in st.session_state:
     r = st.session_state["risultato"]
