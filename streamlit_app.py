@@ -1138,6 +1138,28 @@ quota_bosco = st.number_input(
 )
 quota_bosco = int(quota_bosco) if quota_bosco > 0 else None
 
+ESPOSIZIONI = {
+    "Non specificata (nessuna correzione)": 0.0,
+    "Nord (versante freddo/umido)": -2.0,
+    "Nord-Est": -1.0,
+    "Nord-Ovest": -1.0,
+    "Est": 0.0,
+    "Ovest": 0.0,
+    "Sud-Est": +1.0,
+    "Sud-Ovest": +1.0,
+    "Sud (versante caldo/secco)": +2.0,
+    "Piano / Misto": 0.0,
+}
+
+esposizione_scelta = st.selectbox(
+    "Esposizione del versante — opzionale",
+    list(ESPOSIZIONI.keys()),
+    index=0,
+    help="Corregge la temperatura in base all'orientamento del versante rispetto al sole. "
+         "Nord = più freddo/umido (−2°C), Sud = più caldo/secco (+2°C).",
+)
+correzione_esposizione = ESPOSIZIONI[esposizione_scelta]
+
 cerca = st.button("Cerca", type="primary", use_container_width=True)
 cerca_automatica = bool(luogo_default)
 
@@ -1161,25 +1183,30 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                     candidati = [d for d in date_ordinate if d <= oggi_candidata]
                     oggi_str = candidati[-1] if candidati else date_ordinate[-1]
 
-                # Correzione altimetrica della temperatura
-                # Se l'utente ha inserito una quota bosco E abbiamo la quota della cella meteo,
-                # calcoliamo la differenza e correggiamo tutte le temperature.
-                # Gradiente adiabatico standard: -0.65°C ogni 100m di quota.
-                # Se il bosco è più in alto della cella → temperatura reale più bassa (correzione negativa)
-                # Se il bosco è più in basso della cella → temperatura reale più alta (correzione positiva)
+                # Correzione temperatura: quota + esposizione
                 correzione_temp = 0.0
                 dati_corretti = dati  # default: nessuna correzione
+                correzione_quota = 0.0
                 if quota_bosco is not None and elevazione is not None:
-                    diff_quota = quota_bosco - elevazione  # positivo = bosco più in alto
-                    correzione_temp = -(diff_quota * 0.65 / 100)  # negativo se bosco più in alto
-                    # Applica correzione a una copia dei dati
+                    diff_quota = quota_bosco - elevazione
+                    correzione_quota = -(diff_quota * 0.65 / 100)
+
+                # Correzione totale = quota + esposizione
+                correzione_totale = correzione_quota + correzione_esposizione
+
+                if correzione_totale != 0.0:
+                    correzione_temp = correzione_totale
                     dati_corretti = {}
                     for data_str, valori in dati.items():
                         dati_corretti[data_str] = {
                             "pioggia_mm": valori["pioggia_mm"],
-                            "temp_max": round(valori["temp_max"] + correzione_temp, 2) if valori["temp_max"] is not None else None,
-                            "temp_min": round(valori["temp_min"] + correzione_temp, 2) if valori["temp_min"] is not None else None,
-                            "temp_media": round(valori["temp_media"] + correzione_temp, 2) if valori["temp_media"] is not None else None,
+                            "vento_max": valori.get("vento_max"),
+                            "umidita_media": valori.get("umidita_media"),
+                            "temp_suolo_superficiale": valori.get("temp_suolo_superficiale"),
+                            "temp_suolo_profonda": valori.get("temp_suolo_profonda"),
+                            "temp_max": round(valori["temp_max"] + correzione_totale, 2) if valori["temp_max"] is not None else None,
+                            "temp_min": round(valori["temp_min"] + correzione_totale, 2) if valori["temp_min"] is not None else None,
+                            "temp_media": round(valori["temp_media"] + correzione_totale, 2) if valori["temp_media"] is not None else None,
                         }
 
                 # Calcola con dati originali (per mostrare il confronto)
@@ -1209,6 +1236,9 @@ if (cerca or cerca_automatica) and luogo_input.strip():
                     "elevazione": elevazione,
                     "quota_bosco": quota_bosco,
                     "correzione_temp": round(correzione_temp, 2),
+                    "correzione_quota": round(correzione_quota, 2),
+                    "correzione_esposizione": correzione_esposizione,
+                    "esposizione_scelta": esposizione_scelta,
                     "_dati_grezzi": dati,
                 }
 
@@ -1244,6 +1274,9 @@ if "risultato" in st.session_state:
     elevazione_luogo = geo.get("elevazione_luogo")
     quota_bosco = r.get("quota_bosco")
     correzione_temp = r.get("correzione_temp", 0.0)
+    correzione_quota = r.get("correzione_quota", 0.0)
+    correzione_esp = r.get("correzione_esposizione", 0.0)
+    esposizione_nome = r.get("esposizione_scelta", "Non specificata")
 
     data_leggibile = datetime.strptime(oggi_str, "%Y-%m-%d").strftime("%-d %B")
     st.subheader(f"{geo['nome']}{', ' + geo['regione'] if geo['regione'] else ''}")
@@ -1266,18 +1299,21 @@ if "risultato" in st.session_state:
 
     if elevazione_modello is not None:
         riga_quota = f"⛰️ Altitudine cella meteo: **{elevazione_modello:.0f} m**"
-        if quota_bosco is not None:
-            diff_quota = quota_bosco - elevazione_modello
-            segno = "+" if correzione_temp > 0 else ""
+        if quota_bosco is not None or correzione_esp != 0.0:
+            dettagli = []
+            if quota_bosco is not None:
+                diff_quota = quota_bosco - elevazione_modello
+                dettagli.append(f"Quota bosco: **{quota_bosco} m** (diff. {diff_quota:+.0f} m → {correzione_quota:+.2f}°C)")
+            if correzione_esp != 0.0:
+                dettagli.append(f"Esposizione **{esposizione_nome}** → {correzione_esp:+.1f}°C")
             if correzione_temp != 0:
+                segno = "+" if correzione_temp > 0 else ""
                 st.info(
-                    f"{riga_quota} · Quota tuo bosco: **{quota_bosco} m** "
-                    f"(differenza {diff_quota:+.0f} m) · "
-                    f"Correzione temperatura applicata: **{segno}{correzione_temp:.2f}°C** "
-                    f"su tutte le specie"
+                    f"{riga_quota} · " + " · ".join(dettagli) +
+                    f" · **Correzione totale: {segno}{correzione_temp:.2f}°C**"
                 )
             else:
-                st.caption(f"{riga_quota} · Quota bosco: **{quota_bosco} m** — differenza trascurabile, nessuna correzione applicata")
+                st.caption(f"{riga_quota} — correzioni si annullano, temperatura invariata")
         elif elevazione_luogo is not None:
             diff = elevazione_modello - elevazione_luogo
             if abs(diff) >= 150:
