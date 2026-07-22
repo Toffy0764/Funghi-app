@@ -73,6 +73,97 @@ def parse_coordinate(testo: str):
     return None
 
 
+# Mappa tag OSM → descrizione leggibile e specie fungine associate
+BOSCO_TAG_SPECIE = {
+    "fagus":       ("Faggio",        ["Porcini Edulis", "Finferli", "Russule"]),
+    "beech":       ("Faggio",        ["Porcini Edulis", "Finferli", "Russule"]),
+    "abies":       ("Abete bianco",  ["Porcini Edulis", "Porcini Aereus"]),
+    "picea":       ("Abete rosso",   ["Porcini Edulis"]),
+    "spruce":      ("Abete rosso",   ["Porcini Edulis"]),
+    "pinus":       ("Pino",          ["Porcini Pinophilus", "Finferli"]),
+    "pine":        ("Pino",          ["Porcini Pinophilus", "Finferli"]),
+    "castanea":    ("Castagno",      ["Porcini Aereus", "Russule", "Finferli"]),
+    "chestnut":    ("Castagno",      ["Porcini Aereus", "Russule", "Finferli"]),
+    "quercus":     ("Quercia",       ["Porcini Aereus", "Russule"]),
+    "oak":         ("Quercia",       ["Porcini Aereus", "Russule"]),
+    "larix":       ("Larice",        ["Porcini Edulis", "Finferli"]),
+    "larch":       ("Larice",        ["Porcini Edulis", "Finferli"]),
+    "betula":      ("Betulla",       ["Russule", "Finferli"]),
+    "birch":       ("Betulla",       ["Russule", "Finferli"]),
+    "carpinus":    ("Carpino",       ["Russule"]),
+    "hornbeam":    ("Carpino",       ["Russule"]),
+}
+
+LEAF_TYPE = {
+    "broadleaved": "Latifoglie (foglie larghe)",
+    "needleleaved": "Conifere (aghifoglie)",
+    "mixed": "Misto (latifoglie + conifere)",
+}
+
+
+@st.cache_data(ttl=86400, show_spinner=False)  # cache 24h — i dati forestali cambiano poco
+def tipo_bosco_osm(lat: float, lon: float, raggio_m: int = 500):
+    """
+    Interroga OpenStreetMap via Overpass API per trovare il tipo di bosco
+    entro `raggio_m` metri dalle coordinate date.
+    Restituisce un dizionario con tipo, specie, e funghi associati.
+    """
+    overpass_query = f"""
+[out:json][timeout:15];
+(
+  way[natural=wood](around:{raggio_m},{lat},{lon});
+  relation[natural=wood](around:{raggio_m},{lat},{lon});
+  way[landuse=forest](around:{raggio_m},{lat},{lon});
+  relation[landuse=forest](around:{raggio_m},{lat},{lon});
+);
+out tags 3;
+"""
+    try:
+        url = "https://overpass-api.de/api/interpreter"
+        resp = requests.post(
+            url,
+            data={"data": overpass_query},
+            headers={"User-Agent": "IndiceFungaiolo/1.0"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        elements = resp.json().get("elements", [])
+        if not elements:
+            return None
+
+        # Raccoglie tutti i tag trovati (prende il primo elemento con più info)
+        elementi_ricchi = sorted(elements, key=lambda e: len(e.get("tags", {})), reverse=True)
+        tags = elementi_ricchi[0].get("tags", {})
+
+        # Estrai informazioni rilevanti
+        species_raw = (tags.get("species") or tags.get("species:it") or
+                       tags.get("taxon") or "").lower()
+        leaf_type = tags.get("leaf_type", "")
+        leaf_cycle = tags.get("leaf_cycle", "")
+        nome_osm = tags.get("name", "")
+
+        # Cerca corrispondenza nelle specie note
+        specie_trovata = None
+        funghi_associati = []
+        for chiave, (nome_it, funghi) in BOSCO_TAG_SPECIE.items():
+            if chiave in species_raw:
+                specie_trovata = nome_it
+                funghi_associati = funghi
+                break
+
+        return {
+            "species_raw": species_raw,
+            "specie_it": specie_trovata,
+            "leaf_type": LEAF_TYPE.get(leaf_type, leaf_type),
+            "leaf_cycle": "Deciduo" if leaf_cycle == "deciduous" else ("Sempreverde" if leaf_cycle == "evergreen" else ""),
+            "nome_osm": nome_osm,
+            "funghi_associati": funghi_associati,
+            "n_elementi": len(elements),
+        }
+    except Exception:
+        return None
+
+
 def reverse_geocodifica(lat: float, lon: float):
     """
     Trova il nome della località più vicina alle coordinate date,
@@ -1296,6 +1387,36 @@ if "risultato" in st.session_state:
         st.caption(
             f"🌍 Modello: **{modello_usato}** — ICON-D2 non disponibile, uso il modello globale generico."
         )
+
+    # --- Tipo di bosco (OpenStreetMap) ---
+    with st.spinner("Cerco il tipo di bosco nelle vicinanze..."):
+        info_bosco = tipo_bosco_osm(lat, lon)
+
+    if info_bosco:
+        parti = []
+        if info_bosco["specie_it"]:
+            parti.append(f"**{info_bosco['specie_it']}**")
+        elif info_bosco["species_raw"]:
+            parti.append(f"Specie: {info_bosco['species_raw']}")
+        if info_bosco["leaf_type"]:
+            parti.append(info_bosco["leaf_type"])
+        if info_bosco["leaf_cycle"]:
+            parti.append(info_bosco["leaf_cycle"])
+        if info_bosco["nome_osm"]:
+            parti.append(f'"{info_bosco["nome_osm"]}"')
+        descrizione = " · ".join(parti) if parti else "Bosco rilevato (specie non specificata in OSM)"
+        st.markdown(f"🌲 **Bosco nelle vicinanze:** {descrizione}")
+
+        if info_bosco["funghi_associati"]:
+            st.caption(
+                f"Specie fungine tipicamente associate: "
+                f"{', '.join(info_bosco['funghi_associati'])}"
+            )
+        else:
+            st.caption("Specie fungine associate: non determinabile dalla specie arborea rilevata")
+    else:
+        st.caption("🌲 Tipo di bosco: non trovato in OpenStreetMap entro 500m — "
+                   "prova a inserire coordinate più precise del bosco che ti interessa")
 
     if elevazione_modello is not None:
         riga_quota = f"⛰️ Altitudine cella meteo: **{elevazione_modello:.0f} m**"
