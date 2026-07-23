@@ -1388,36 +1388,6 @@ if "risultato" in st.session_state:
             f"🌍 Modello: **{modello_usato}** — ICON-D2 non disponibile, uso il modello globale generico."
         )
 
-    # --- Tipo di bosco (OpenStreetMap) ---
-    with st.spinner("Cerco il tipo di bosco nelle vicinanze..."):
-        info_bosco = tipo_bosco_osm(lat, lon)
-
-    if info_bosco:
-        parti = []
-        if info_bosco["specie_it"]:
-            parti.append(f"**{info_bosco['specie_it']}**")
-        elif info_bosco["species_raw"]:
-            parti.append(f"Specie: {info_bosco['species_raw']}")
-        if info_bosco["leaf_type"]:
-            parti.append(info_bosco["leaf_type"])
-        if info_bosco["leaf_cycle"]:
-            parti.append(info_bosco["leaf_cycle"])
-        if info_bosco["nome_osm"]:
-            parti.append(f'"{info_bosco["nome_osm"]}"')
-        descrizione = " · ".join(parti) if parti else "Bosco rilevato (specie non specificata in OSM)"
-        st.markdown(f"🌲 **Bosco nelle vicinanze:** {descrizione}")
-
-        if info_bosco["funghi_associati"]:
-            st.caption(
-                f"Specie fungine tipicamente associate: "
-                f"{', '.join(info_bosco['funghi_associati'])}"
-            )
-        else:
-            st.caption("Specie fungine associate: non determinabile dalla specie arborea rilevata")
-    else:
-        st.caption("🌲 Tipo di bosco: non trovato in OpenStreetMap entro 500m — "
-                   "prova a inserire coordinate più precise del bosco che ti interessa")
-
     if elevazione_modello is not None:
         riga_quota = f"⛰️ Altitudine cella meteo: **{elevazione_modello:.0f} m**"
         if quota_bosco is not None or correzione_esp != 0.0:
@@ -2424,4 +2394,3 @@ if not diario_df.empty:
             st.divider()
 else:
     st.caption("Nessuna uscita registrata ancora. Aggiungi la tua prima uscita qui sopra!")
-    
