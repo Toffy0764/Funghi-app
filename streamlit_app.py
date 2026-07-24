@@ -2253,6 +2253,99 @@ if "screening_risultati" in st.session_state:
                 )
 
 
+# --- Mappa boschi Veneto/Trentino (Carta della Natura ISPRA) ---
+st.markdown("---")
+st.subheader("🌲 Mappa dei boschi — Carta della Natura ISPRA")
+st.caption(
+    "Layer WMS ufficiale ISPRA (Carta degli Habitat d'Italia 1:50.000). "
+    "Tocca un punto sulla mappa per vedere il tipo di habitat/bosco. "
+    "I colori rappresentano i diversi habitat Natura 2000."
+)
+
+# Controlli mappa
+col_m1, col_m2 = st.columns(2)
+with col_m1:
+    zona_mappa = st.selectbox(
+        "Zona",
+        ["Veneto + Trentino", "Solo Veneto", "Solo Trentino-Alto Adige",
+         "Lombardia", "Friuli-Venezia Giulia"],
+        index=0
+    )
+with col_m2:
+    mostra_carta = st.checkbox("Mostra Carta della Natura ISPRA", value=True)
+
+# Bounding box per zona
+ZONE_MAPPA = {
+    "Veneto + Trentino":         (45.3, 47.1, 10.4, 12.8, 8),
+    "Solo Veneto":               (45.0, 46.7, 10.6, 12.8, 9),
+    "Solo Trentino-Alto Adige":  (45.7, 47.1, 10.4, 12.5, 9),
+    "Lombardia":                 (44.7, 46.7,  8.5, 11.4, 8),
+    "Friuli-Venezia Giulia":     (45.6, 46.7, 12.3, 13.9, 9),
+}
+lat_min, lat_max, lon_min, lon_max, zoom = ZONE_MAPPA[zona_mappa]
+centro_lat = (lat_min + lat_max) / 2
+centro_lon = (lon_min + lon_max) / 2
+
+# Costruisce mappa Folium con layer WMS ISPRA
+mappa_boschi = folium.Map(
+    location=[centro_lat, centro_lon],
+    zoom_start=zoom,
+    tiles="OpenStreetMap"
+)
+
+# Aggiunge layer OpenStreetMap base con boschi visibili
+folium.TileLayer(
+    tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attr="© OpenStreetMap contributors",
+    name="OpenStreetMap",
+    overlay=False,
+    control=True,
+).add_to(mappa_boschi)
+
+if mostra_carta:
+    # Layer WMS Carta della Natura ISPRA
+    # Il WMS viene caricato dal browser iPad direttamente da ISPRA
+    # (non passa da Streamlit Cloud, quindi nessun blocco IP)
+    folium.WmsTileLayer(
+        url="https://sdi.isprambiente.it/geoserver/hb1/habitat/wms",
+        layers="hb1:CNAT_Habitat",
+        fmt="image/png",
+        transparent=True,
+        version="1.3.0",
+        attr="ISPRA - Carta degli Habitat d'Italia CC BY 4.0",
+        name="Carta della Natura ISPRA",
+        overlay=True,
+        control=True,
+        opacity=0.7,
+    ).add_to(mappa_boschi)
+
+# Aggiunge il punto del luogo cercato se disponibile
+if "risultato" in st.session_state:
+    geo_r = st.session_state["risultato"]["geo"]
+    folium.Marker(
+        location=[geo_r["lat"], geo_r["lon"]],
+        popup=f"📍 {geo_r['nome']}",
+        tooltip=geo_r["nome"],
+        icon=folium.Icon(color="green", icon="leaf"),
+    ).add_to(mappa_boschi)
+
+folium.LayerControl().add_to(mappa_boschi)
+
+st_folium(
+    mappa_boschi,
+    width=700,
+    height=500,
+    returned_objects=[],
+    key="mappa_boschi_ispra"
+)
+
+st.caption(
+    "💡 **Come usarla**: zoom avanti sulla zona del tuo bosco — "
+    "i colori ISPRA mostrano i diversi tipi di habitat Natura 2000. "
+    "Se il layer ISPRA non carica, significa che il server è temporaneamente "
+    "non disponibile — riprova più tardi o usa solo la base OpenStreetMap."
+)
+
 # --- Storico ---
 storico_df = carica_storico()
 if not storico_df.empty:
