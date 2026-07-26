@@ -606,13 +606,23 @@ def stato_colore_porcini(riga):
     Traduce lo stato del giorno nei 4 colori del modello originale:
     Rosso: non ci sono le condizioni per la riproduzione
     Giallo: condizioni giuste per la riproduzione (in corso)
-    Verde: condizioni giuste per la buttata (fase completata, ancora in range)
+    Verde: condizioni giuste per la buttata (fase completata + shock termico rilevato)
     Blu: buttata in esaurimento (fase completata ma appena uscito dal range)
+
+    NOTA CALIBRAZIONE (luglio 2026, Passo Cereda):
+    Lo shock termico è condizione NECESSARIA per il Verde, non solo un bonus.
+    Zoffoli: 'la riproduzione parte con una bella pioggia associata a uno sbalzo
+    di 8/15°C'. Senza shock termico, anche con pioggia e temperatura in range,
+    il semaforo resta Giallo (riproduzione in corso ma innesco mancante).
     """
-    if riga["fase_completata"] and riga["in_range"]:
+    shock_presente = riga.get("bonus_shock", 0) > 0
+
+    if riga["fase_completata"] and riga["in_range"] and shock_presente:
         return "Verde", "🟢", "Condizioni per la buttata"
     elif riga["fase_completata"] and not riga["in_range"]:
         return "Blu", "🔵", "Buttata in esaurimento"
+    elif riga["fase_completata"] and riga["in_range"] and not shock_presente:
+        return "Giallo", "🟡", "Fase completata ma shock termico assente — attendere"
     elif riga["in_range"]:
         return "Giallo", "🟡", "In riproduzione, non ancora pronto"
     else:
