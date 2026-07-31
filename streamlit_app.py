@@ -2263,6 +2263,186 @@ if "screening_risultati" in st.session_state:
                 )
 
 
+# --- Pioggia ultimi 10 giorni ---
+st.markdown("---")
+st.subheader("🌧️ Dove ha piovuto di più — ultimi 10 giorni")
+st.caption("Confronta rapidamente la pioggia cumulata degli ultimi 10 giorni tra più luoghi, "
+           "ordinati dal più piovoso al meno. Utile per capire dove cercare prima di fare "
+           "il calcolo completo del semaforo.")
+
+modalita_pioggia = st.radio(
+    "Modalità",
+    ["📝 Lista manuale", "🗺️ Griglia regione"],
+    horizontal=True,
+    key="radio_pioggia"
+)
+
+if modalita_pioggia == "📝 Lista manuale":
+    luoghi_pioggia_input = st.text_input(
+        "Luoghi separati da virgola",
+        placeholder="Es. Asiago, Posina, Recoaro, Passo Cereda, Folgaria",
+        key="input_pioggia_luoghi"
+    )
+    avvia_pioggia = st.button("🌧️ Calcola pioggia", type="secondary",
+                               use_container_width=True, key="btn_pioggia_lista")
+
+    if avvia_pioggia and luoghi_pioggia_input.strip():
+        lista_p = [l.strip() for l in luoghi_pioggia_input.split(",") if l.strip()]
+        if len(lista_p) > 10:
+            st.warning("Massimo 10 luoghi alla volta.")
+        else:
+            oggi_p = datetime.now().strftime("%Y-%m-%d")
+            with st.spinner(f"Scarico dati pioggia per {len(lista_p)} luoghi..."):
+
+                def pioggia_luogo(luogo_txt):
+                    try:
+                        geo = risolvi_luogo(luogo_txt)
+                        if not geo:
+                            return None
+                        dati_p, _, elev = scarica_dati_meteo(geo["lat"], geo["lon"])
+                        date_ord = sorted(dati_p.keys())
+                        idx_oggi = next((i for i, d in enumerate(date_ord) if d == oggi_p),
+                                        len(date_ord) - 1)
+                        idx_inizio = max(0, idx_oggi - 9)
+                        pioggia_10gg = sum(
+                            dati_p[date_ord[i]]["pioggia_mm"]
+                            for i in range(idx_inizio, idx_oggi + 1)
+                        )
+                        return {
+                            "luogo": geo["nome"],
+                            "pioggia_10gg": round(pioggia_10gg, 1),
+                            "elevazione": int(elev) if elev else "—",
+                        }
+                    except Exception:
+                        return None
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+                    risultati_p = [r for r in ex.map(pioggia_luogo, lista_p) if r]
+
+            if risultati_p:
+                risultati_p.sort(key=lambda x: x["pioggia_10gg"], reverse=True)
+                max_p = risultati_p[0]["pioggia_10gg"]
+                st.markdown("**Pioggia cumulata ultimi 10 giorni:**")
+                for res in risultati_p:
+                    pct = res["pioggia_10gg"] / max_p if max_p > 0 else 0
+                    colore = "#4CAF50" if res["pioggia_10gg"] >= 40 else \
+                             "#FFC107" if res["pioggia_10gg"] >= 20 else "#F44336"
+                    st.markdown(
+                        f"<div style='display:flex;align-items:center;gap:10px;margin:4px 0'>"
+                        f"<span style='width:150px;font-size:13px'><b>{res['luogo']}</b>"
+                        f"<br><small style='color:#8A8270'>⛰️ {res['elevazione']}m</small></span>"
+                        f"<div style='height:24px;width:{max(4, pct*100):.0f}%;background:{colore};"
+                        f"border-radius:4px;min-width:4px'></div>"
+                        f"<span style='font-size:13px;font-weight:600'>{res['pioggia_10gg']} mm</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                st.caption("🟢 ≥40mm · 🟡 20-40mm · 🔴 <20mm (soglia minima Zoffoli per porcini)")
+            else:
+                st.error("Nessun luogo trovato. Controlla i nomi e riprova.")
+
+else:  # Griglia regione
+    col_rp1, col_rp2, col_rp3 = st.columns(3)
+    with col_rp1:
+        regione_pioggia = st.selectbox(
+            "Regione", list(REGIONI_NORD_ITALIA.keys()), key="sel_regione_pioggia"
+        )
+    with col_rp2:
+        quota_min_p = st.number_input("Quota min (m)", 0, 2000, 400, 100,
+                                       key="quota_min_pioggia")
+    with col_rp3:
+        quota_max_p = st.number_input("Quota max (m)", 100, 3000, 1800, 100,
+                                       key="quota_max_pioggia")
+
+    avvia_pioggia_griglia = st.button("🌧️ Calcola pioggia su regione", type="secondary",
+                                       use_container_width=True, key="btn_pioggia_griglia")
+
+    if avvia_pioggia_griglia:
+        lat_min, lat_max, lon_min, lon_max = REGIONI_NORD_ITALIA[regione_pioggia]
+        punti_p = griglia_punti(lat_min, lat_max, lon_min, lon_max, passo_gradi=0.13)
+        oggi_p = datetime.now().strftime("%Y-%m-%d")
+
+        with st.spinner(f"Scarico dati pioggia per {len(punti_p)} punti..."):
+            barra_p = st.progress(0)
+
+            def pioggia_punto(lat, lon):
+                try:
+                    url = "https://api.open-meteo.com/v1/forecast"
+                    params = {
+                        "latitude": lat, "longitude": lon,
+                        "daily": ["precipitation_sum"],
+                        "timezone": "auto",
+                        "past_days": 10, "forecast_days": 0,
+                        "models": "icon_d2",
+                    }
+                    r = requests.get(url, params=params, timeout=10)
+                    r.raise_for_status()
+                    data = r.json()
+                    pioggia = sum(v or 0 for v in data["daily"]["precipitation_sum"])
+                    elev = int(data.get("elevation", 0))
+                    return {"lat": lat, "lon": lon,
+                            "pioggia_10gg": round(pioggia, 1),
+                            "elevazione": elev}
+                except Exception:
+                    return None
+
+            risultati_griglia_p = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+                futures_p = {ex.submit(pioggia_punto, lat, lon): (lat, lon)
+                             for lat, lon in punti_p}
+                completati_p = 0
+                for future in concurrent.futures.as_completed(futures_p):
+                    completati_p += 1
+                    barra_p.progress(completati_p / len(punti_p))
+                    res = future.result()
+                    if res and quota_min_p <= res["elevazione"] <= quota_max_p:
+                        risultati_griglia_p.append(res)
+
+            barra_p.empty()
+            st.session_state["pioggia_griglia"] = risultati_griglia_p
+            st.session_state["pioggia_griglia_centro"] = (
+                (lat_min + lat_max) / 2, (lon_min + lon_max) / 2
+            )
+
+    if "pioggia_griglia" in st.session_state:
+        risultati_griglia_p = st.session_state["pioggia_griglia"]
+        centro_p = st.session_state["pioggia_griglia_centro"]
+
+        if risultati_griglia_p:
+            # Mappa colorata pioggia
+            mappa_p = folium.Map(location=list(centro_p), zoom_start=8,
+                                  tiles="OpenStreetMap")
+            max_pioggia = max(r["pioggia_10gg"] for r in risultati_griglia_p)
+
+            for res in risultati_griglia_p:
+                pct = res["pioggia_10gg"] / max_pioggia if max_pioggia > 0 else 0
+                colore_f = "green" if res["pioggia_10gg"] >= 40 else \
+                           "orange" if res["pioggia_10gg"] >= 20 else "red"
+                folium.CircleMarker(
+                    location=[res["lat"], res["lon"]],
+                    radius=8,
+                    color=colore_f, fill=True,
+                    fill_color=colore_f, fill_opacity=0.6,
+                    popup=f"{res['pioggia_10gg']} mm · {res['elevazione']}m",
+                    tooltip=f"🌧️ {res['pioggia_10gg']} mm",
+                ).add_to(mappa_p)
+
+            st_folium(mappa_p, width=700, height=450, returned_objects=[],
+                      key="mappa_pioggia_griglia")
+
+            # Top 10 punti più piovosi
+            top10 = sorted(risultati_griglia_p,
+                           key=lambda x: x["pioggia_10gg"], reverse=True)[:10]
+            st.markdown("**Top 10 zone più piovose:**")
+            for i, res in enumerate(top10):
+                url_osm = (f"https://www.openstreetmap.org/?mlat={res['lat']}"
+                           f"&mlon={res['lon']}#map=13/{res['lat']}/{res['lon']}")
+                st.markdown(
+                    f"{i+1}. [📍 {res['lat']:.3f}, {res['lon']:.3f}]({url_osm}) · "
+                    f"**{res['pioggia_10gg']} mm** · ⛰️ {res['elevazione']}m"
+                )
+            st.caption("🟢 ≥40mm · 🟡 20-40mm · 🔴 <20mm")
+
 # --- Mappa boschi Veneto/Trentino (Carta della Natura ISPRA) ---
 st.markdown("---")
 st.subheader("🌲 Mappa dei boschi — Carta della Natura ISPRA")
